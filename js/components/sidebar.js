@@ -66,7 +66,7 @@ function createMainSidebar(activePath) {
             <div class="sidebar__user-email">${currentUser.email}</div>
           </div>
         </div>
-        <a href="#/login" class="sidebar__signout">
+        <a href="#/" class="sidebar__signout">
           <span class="sidebar__link-icon">${icon('signout')}</span>
           Sign out
         </a>

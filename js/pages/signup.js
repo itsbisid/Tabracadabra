@@ -57,7 +57,7 @@ export function renderSignup(container, navigate) {
         </form>
         
         <div class="auth-footer" style="margin-top: 32px;">
-          Already have an account? <a href="#/login">Sign in</a>
+          Already have an account? <a href="#/">Sign in</a>
         </div>
       </div>
     </div>
@@ -108,23 +108,29 @@ export function renderSignup(container, navigate) {
     submitBtn.innerHTML = 'Creating account...';
     submitBtn.disabled = true;
 
-    const { error } = await supabase.auth.signUp({
-      email: emailInput.value,
-      password: passwordInput.value,
-      options: {
-        data: {
-          full_name: nameInput.value
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: emailInput.value,
+        password: passwordInput.value,
+        options: {
+          data: {
+            full_name: nameInput.value
+          }
         }
-      }
-    });
+      });
 
-    if (error) {
-      alert(error.message);
+      if (!error) {
+        alert('Success! Check your email for a confirmation link.');
+        navigate('/');
+      } else {
+        alert(error.message);
+      }
       submitBtn.innerHTML = originalText;
       submitBtn.disabled = false;
-    } else {
-      alert('Success! Check your email for a confirmation link.');
-      navigate('/login');
+    } catch (err) {
+      alert(err.message);
+      submitBtn.innerHTML = originalText;
+      submitBtn.disabled = false;
     }
   });
 }

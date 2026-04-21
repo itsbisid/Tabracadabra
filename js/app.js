@@ -1,6 +1,5 @@
 // TabraCadabra — Main App Router & Initializer
 import '../style.css';
-import { renderLanding } from './pages/landing.js';
 import { renderLogin } from './pages/login.js';
 import { renderSignup } from './pages/signup.js';
 import { renderDashboard } from './pages/dashboard.js';
@@ -29,8 +28,7 @@ import { renderFeedback } from './pages/tournament/feedback.js';
 import { renderAnalytics } from './pages/tournament/analytics.js';
 
 const routes = {
-  '/': renderLanding,
-  '/login': renderLogin,
+  '/': renderLogin,
   '/signup': renderSignup,
   '/dashboard': renderDashboard,
   '/my-journey': renderMyJourney,
