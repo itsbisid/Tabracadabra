@@ -3,7 +3,11 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 
 export async function renderTournamentDashboard(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  const tournamentId = localStorage.getItem('active_tournament_id');
+  if (!tournamentId) {
+    window.tcNavigate('/dashboard');
+    return;
+  }
 
   const fetchStats = async () => {
     // Fetch Tournament Info

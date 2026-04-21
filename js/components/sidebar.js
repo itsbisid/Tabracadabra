@@ -1,8 +1,14 @@
-export function createSidebar(activePath, user) {
+export async function createSidebar(activePath, user) {
   const isTournament = activePath.startsWith('/tournament/') && activePath !== '/tournaments';
   
   if (isTournament) {
-    return createTournamentSidebar(activePath, user);
+    const tournamentId = localStorage.getItem('active_tournament_id');
+    let tournament = null;
+    if (tournamentId) {
+      const { data } = await supabase.from('tournaments').select('*').eq('id', tournamentId).single();
+      tournament = data;
+    }
+    return createTournamentSidebar(activePath, user, tournament);
   }
   return createMainSidebar(activePath, user);
 }
@@ -73,10 +79,7 @@ function createMainSidebar(activePath, user) {
       </div>
     </aside>
   `;
-}
-
-function createTournamentSidebar(activePath) {
-  // Extract tournament from path or use generic
+function createTournamentSidebar(activePath, user, tournament) {
   return `
     <aside class="sidebar">
       <div class="sidebar__logo" style="padding: 16px;">
@@ -86,9 +89,9 @@ function createTournamentSidebar(activePath) {
       </div>
       
       <div style="padding: 16px; border-bottom: 1px solid var(--color-border);">
-        <div style="font-weight:700; font-size:16px;">KDO26</div>
-        <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:8px;">Kumasi Debate Open</div>
-        <span class="badge badge--active">ACTIVE</span>
+        <div style="font-weight:700; font-size:16px;">${tournament?.short_name || tournament?.name || 'Tournament'}</div>
+        <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:8px;">${tournament?.name || 'Management Workspace'}</div>
+        <span class="badge ${tournament ? 'badge--active' : 'badge--draft'}">${tournament ? 'LIVE' : 'OFFLINE'}</span>
       </div>
 
       <div class="sidebar__section">

@@ -6,10 +6,12 @@ import { getCurrentUser } from '../lib/auth-utils.js';
 export async function renderAppLayout(container, activePath, title, subtitle, contentHtml) {
   const user = await getCurrentUser();
   
+  const sidebarHtml = await createSidebar(activePath, user);
+  
   container.innerHTML = `
     <div class="layout-app anim-fade-in">
       <div class="layout-app__sidebar" id="app-sidebar">
-        ${createSidebar(activePath, user)}
+        ${sidebarHtml}
       </div>
       <main class="layout-app__main" id="app-main">
         ${createHeader(title, subtitle, user)}

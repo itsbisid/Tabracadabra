@@ -1,12 +1,16 @@
 import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
+import { getCurrentUser } from '../lib/auth-utils.js';
 
 export async function renderMyTournaments(container) {
+  const user = await getCurrentUser();
+
   const fetchTournaments = async () => {
     const { data, error } = await supabase
       .from('tournaments')
       .select('*')
+      .eq('owner_id', user.id)
       .order('created_at', { ascending: false });
 
     if (error) {

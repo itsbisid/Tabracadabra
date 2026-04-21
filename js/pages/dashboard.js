@@ -10,6 +10,7 @@ export async function renderDashboard(container) {
   const { data: tournaments, error } = await supabase
     .from('tournaments')
     .select('*')
+    .eq('owner_id', user.id)
     .order('created_at', { ascending: false });
 
   const activeCount = tournaments?.filter(t => t.status === 'active' || t.status === 'registration').length || 0;
