@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Tournament {
+  id                String             @id @default(cuid())
+  name              String
+  shortName         String?
+  registrationLinks RegistrationLink[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+}
+
+model RegistrationLink {
+  id              String                   @id @default(cuid())
+  tournamentId    String
+  tournament      Tournament               @relation(fields: [tournamentId], references: [id])
+  token           String                   @unique @default(cuid())
+  label           String                   @default("Registration Link")
+  roles           String[]                 @default(["Team", "Adjudicator"])
+  autoAccept      Boolean                  @default(true)
+  isPaused        Boolean                  @default(false)
+  submissions     RegistrationSubmission[]
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+}
+
+model RegistrationSubmission {
+  id                 String           @id @default(cuid())
+  registrationLinkId String
+  registrationLink   RegistrationLink @relation(fields: [registrationLinkId], references: [id])
+  role               String           // "Team" or "Adjudicator"
+  data               Json             // Stores submitted fields like team name, speakers, etc.
+  status             String           @default("pending") // "pending", "accepted", "denied"
+  createdAt          DateTime         @default(now())
+}
