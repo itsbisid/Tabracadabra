@@ -56,10 +56,6 @@ export function renderSignup(container, navigate) {
           <button type="submit" id="submit-btn" class="auth-submit-btn" style="background: #0038A8;">Create account</button>
         </form>
         
-        <div id="resend-container" style="display: none; margin-top: 20px; padding: 12px; background: rgba(0, 56, 168, 0.05); border-radius: 8px; font-size: 14px;">
-          Didn't get the email? <a href="javascript:void(0)" id="resend-btn" style="color: #0038A8; font-weight: 600;">Resend confirmation</a>
-        </div>
-
         <div class="auth-footer" style="margin-top: 32px;">
           Already have an account? <a href="#/">Sign in</a>
         </div>
@@ -124,9 +120,8 @@ export function renderSignup(container, navigate) {
       });
 
       if (!error) {
-        alert('Success! Check your email for a confirmation link.');
-        container.querySelector('#resend-container').style.display = 'block';
-        navigate('/');
+        // With "Confirm Email" OFF, users are logged in immediately
+        navigate('/dashboard');
       } else {
         alert(error.message);
       }
@@ -136,30 +131,6 @@ export function renderSignup(container, navigate) {
       alert(err.message);
       submitBtn.innerHTML = originalText;
       submitBtn.disabled = false;
-    }
-  });
-
-  // Resend Logic
-  const resendBtn = container.querySelector('#resend-btn');
-  resendBtn.addEventListener('click', async () => {
-    const email = emailInput.value;
-    if (!email) {
-      alert("Please enter your email first.");
-      return;
-    }
-
-    resendBtn.innerHTML = 'Sending...';
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: email
-    });
-
-    if (error) {
-      alert(error.message);
-      resendBtn.innerHTML = 'Resend confirmation';
-    } else {
-      alert('Confirmation email resent! Please check your inbox.');
-      resendBtn.innerHTML = 'Resend confirmation';
     }
   });
 }
