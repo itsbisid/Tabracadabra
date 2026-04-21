@@ -166,7 +166,26 @@ export async function renderTeams(container) {
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px;">
         <div style="display:flex; gap:12px; align-items:center;">
           <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
-          <button class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Team</button>
+          <button onclick="document.getElementById('add-team-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Team</button>
+        </div>
+      </div>
+
+      <!-- Add Team Modal -->
+      <div id="add-team-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.4); z-index:9999; justify-content:center; align-items:center; backdrop-filter:blur(2px);">
+        <div style="background:white; border-radius:12px; padding:24px 32px; width:500px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
+          <h2 style="font-size:20px; font-weight:700; margin-bottom:24px;">Manual Team Entry</h2>
+          <form id="manual-team-form" style="display:flex; flex-direction:column; gap:16px;">
+            <div class="form-group"><label class="form-label">Team Name</label><input name="name" required class="form-input"></div>
+            <div class="form-group"><label class="form-label">Institution</label><input name="institution" class="form-input"></div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Speaker 1</label><input name="s1" required class="form-input"></div>
+              <div class="form-group"><label class="form-label">Speaker 2</label><input name="s2" required class="form-input"></div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:12px;">
+              <button type="button" onclick="document.getElementById('add-team-modal').style.display='none'" class="btn btn--outline">Cancel</button>
+              <button type="submit" class="btn btn--primary">Save Team</button>
+            </div>
+          </form>
         </div>
       </div>
         <div style="position:relative; width:300px;">
@@ -186,10 +205,33 @@ export async function renderTeams(container) {
           <p style="color:#64748b; font-size:14px;">Accepted registrations will appear here automatically.</p>
         </div>
       ` : tableHTML}
-    `;
-
     renderAppLayout(container, '/tournament/teams', 'Teams', 'Manage teams participating in this tournament', content);
   };
 
   fetchAndRender();
+
+  // Wire manual form
+  setTimeout(() => {
+    const form = document.getElementById('manual-team-form');
+    if (form) {
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const { error } = await supabase.from('teams').insert({
+          tournament_id: tournamentId,
+          name: fd.get('name'),
+          institution: fd.get('institution'),
+          speaker1_name: fd.get('s1'),
+          speaker2_name: fd.get('s2')
+        });
+        if (error) {
+          alert(error.message);
+        } else {
+          document.getElementById('add-team-modal').style.display = 'none';
+          form.reset();
+          fetchAndRender();
+        }
+      };
+    }
+  }, 100);
 }

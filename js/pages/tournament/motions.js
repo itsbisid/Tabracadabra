@@ -1,135 +1,76 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
-import { tournamentDetail } from '../../data/mock-data.js';
+import { supabase } from '../../lib/supabase.js';
 
-export function renderMotions(container) {
-  window.renderMotionsRefresh = () => renderMotions(container);
+export async function renderMotions(container) {
+  const tournamentId = localStorage.getItem('active_tournament_id');
 
-  window.openMotionCSVModal = () => {
-    // Reusing the generic dash overlay if needed, or simple alert
-    alert('Import CSV workflow not hooked up to a file parser yet.');
+  const fetchAndRender = async () => {
+    const { data: rounds } = await supabase
+      .from('rounds')
+      .select('*')
+      .eq('tournament_id', tournamentId)
+      .order('round_num', { ascending: true });
+
+    renderUI(rounds || []);
   };
 
-  window.submitAddMotion = (e) => {
-    e.preventDefault();
-    const info = document.getElementById('motion-info').value;
-    const text = document.getElementById('motion-text').value;
+  window.tcSaveMotion = async (roundId) => {
+    const text = document.getElementById(`motion-text-${roundId}`).value;
+    const info = document.getElementById(`motion-info-${roundId}`).value;
     
-    if(!tournamentDetail.motions) tournamentDetail.motions = [];
-    tournamentDetail.motions.push({ text, info, id: Date.now() });
-    
-    document.getElementById('add-motion-modal').style.display = 'none';
-    window.renderMotionsRefresh();
+    const { error } = await supabase
+      .from('rounds')
+      .update({ motion_text: text, motion_info: info })
+      .eq('id', roundId);
+
+    if (error) alert(error.message);
+    else fetchAndRender();
   };
 
-  window.deleteMotion = (idx) => {
-    if(confirm('Are you sure you want to delete this motion?')) {
-      tournamentDetail.motions.splice(idx, 1);
-      window.renderMotionsRefresh();
-    }
-  };
-
-  const motionsHtml = (tournamentDetail.motions || []).map((m, i) => `
-    <div style="background:white; border:1px solid var(--color-border); border-radius:12px; margin-bottom:16px; padding:20px; display:flex; justify-content:space-between; align-items:flex-start;">
-      <div>
-        <div style="font-size:12px; font-weight:700; color:var(--color-primary); margin-bottom:8px; text-transform:uppercase;">Motion ${i + 1}</div>
-        <div style="font-size:18px; font-weight:700; color:var(--color-text); margin-bottom:12px;">${m.text}</div>
-        ${m.info ? `<div style="font-size:14px; color:var(--color-text-muted); background:#f8fafc; padding:12px; border-radius:8px; border-left:3px solid var(--color-primary);">${m.info}</div>` : ''}
-      </div>
-      <button onclick="window.deleteMotion(${i})" style="background:none; border:none; color:var(--color-text-muted); cursor:pointer; padding:8px;" onmouseover="this.style.color='var(--color-danger)'" onmouseout="this.style.color='var(--color-text-muted)'">
-        ${icon('trash', 20)}
-      </button>
-    </div>
-  `).join('');
-
-  const content = `
-    <!-- Top Custom Header -->
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px;">
-      <div>
-        <h1 style="font-size:32px; font-weight:800; color:var(--color-text); margin-bottom:8px; line-height:1.2;">Motions</h1>
-        <div style="font-size:16px; color:var(--color-text-muted);">Manage debate motions for each round</div>
-      </div>
-      <div style="display:flex; align-items:center; gap:12px;">
-        <button style="background:white; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; color:var(--color-text); cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='white'">
-          ${icon('monitor', 18)} Projection
-        </button>
-        <button onclick="window.openMotionCSVModal()" style="background:white; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; color:var(--color-text); cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='white'">
-          ${icon('upload', 18)} Import CSV
-        </button>
-        <button onclick="document.getElementById('add-motion-modal').style.display='flex'" style="background:#0044b3; color:white; border:none; border-radius:8px; padding:10px 20px; font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; cursor:pointer;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
-          ${icon('plus', 18)} Add Motion
-        </button>
-      </div>
-    </div>
-
-    <!-- Import CSV Banner -->
-    <div style="background:#eff6ff; border:1px dashed #93c5fd; border-radius:12px; padding:24px; display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
-      <div style="display:flex; gap:16px; align-items:flex-start;">
-        <div style="color:#2563eb;">${icon('fileText', 24)}</div>
-        <div>
-          <div style="font-weight:700; font-size:16px; color:var(--color-text); margin-bottom:4px;">Import motions from a CSV file</div>
-          <div style="font-size:14px; color:var(--color-text-muted);">Download the template, fill in your motions, and upload it</div>
+  const renderUI = (rounds) => {
+    const motionsHtml = rounds.map(r => `
+      <div style="background:white; border:1px solid var(--color-border); border-radius:12px; margin-bottom:24px; overflow:hidden;">
+        <div style="background:#f8fafc; padding:16px 20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+           <div style="font-weight:700; color:var(--color-text);">Round ${r.round_num}: ${r.name}</div>
+           <span class="badge ${r.motion_text ? 'badge--active' : 'badge--draft'}">${r.motion_text ? 'SET' : 'PENDING'}</span>
+        </div>
+        <div style="padding:20px;">
+           <div style="display:flex; flex-direction:column; gap:16px;">
+             <div>
+               <label style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; display:block; margin-bottom:8px;">Motion InfoSlide (Context)</label>
+               <textarea id="motion-info-${r.id}" rows="2" class="form-input" placeholder="Optional context...">${r.motion_info || ''}</textarea>
+             </div>
+             <div>
+               <label style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; display:block; margin-bottom:8px;">Motion Text (THBT...)</label>
+               <textarea id="motion-text-${r.id}" rows="3" class="form-input" placeholder="The motion for this round...">${r.motion_text || ''}</textarea>
+             </div>
+             <div style="display:flex; justify-content:flex-end;">
+               <button onclick="window.tcSaveMotion('${r.id}')" class="btn btn--primary btn--sm" style="gap:8px;">${icon('check', 14)} Save Motion for Round ${r.round_num}</button>
+             </div>
+           </div>
         </div>
       </div>
-      <div style="display:flex; gap:12px;">
-        <button style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:8px 16px; font-weight:600; font-size:13px; display:flex; align-items:center; gap:8px; cursor:pointer; color:var(--color-text);">
-          ${icon('download', 16)} Download Template
-        </button>
-        <button onclick="window.openMotionCSVModal()" style="background:#0044b3; color:white; border:none; border-radius:8px; padding:8px 16px; font-weight:600; font-size:13px; display:flex; align-items:center; gap:8px; cursor:pointer;">
-          ${icon('upload', 16)} Upload CSV
-        </button>
-      </div>
-    </div>
+    `).join('');
 
-    ${(!tournamentDetail.motions || tournamentDetail.motions.length === 0) ? `
-      <!-- Empty State -->
-      <div style="min-height:300px; background:white; border:1px solid var(--color-border); border-radius:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
-        <div style="color:var(--color-text-light); margin-bottom:16px; transform:scale(1.5);">${icon('fileText', 32)}</div>
-        <div style="font-size:18px; font-weight:700; color:var(--color-text-muted); margin-bottom:8px;">No motions added</div>
-        <div style="font-size:14px; color:var(--color-text-muted);">Add motions and assign them to rounds</div>
+    const content = `
+      <div style="margin-bottom:32px;">
+        <h1 style="font-size:32px; font-weight:800; color:var(--color-text); margin-bottom:8px;">Motions</h1>
+        <div style="font-size:16px; color:var(--color-text-muted);">Set and release debate topics for each round</div>
       </div>
-    ` : `
-      <!-- Motions List -->
-      <div style="margin-top: 24px;">
-        ${motionsHtml}
-      </div>
-    `}
 
-    <!-- Add Motion Modal -->
-    <div id="add-motion-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.4); z-index:9999; justify-content:center; align-items:center; backdrop-filter:blur(2px);" onclick="if(event.target.id === 'add-motion-modal') this.style.display='none'">
-      <div style="background:white; border-radius:12px; padding:24px 32px; width:560px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); font-family:var(--font-family);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
-          <h2 style="font-size:20px; font-weight:700; color:var(--color-text); margin:0;">Add Motion</h2>
-          <button onclick="document.getElementById('add-motion-modal').style.display='none'" style="background:none; border:none; cursor:pointer; color:var(--color-text-muted);">${icon('x', 20)}</button>
+      ${rounds.length === 0 ? `
+        <div style="background:white; border:1px solid var(--color-border); border-radius:12px; padding:64px; text-align:center;">
+          <div style="font-size:48px; margin-bottom:16px;">📜</div>
+          <h3 style="font-weight:700; margin-bottom:8px;">No rounds created yet</h3>
+          <p style="color:#64748b; font-size:14px;">Motions are tied to tournament rounds. Create a round in the "Debate Rounds" section first.</p>
+          <button onclick="window.tcNavigate('/tournament/debate-rounds')" class="btn btn--primary mt-lg">Go to Rounds</button>
         </div>
-        
-        <form onsubmit="window.submitAddMotion(event)" style="display:flex; flex-direction:column; gap:20px;">
-          
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            <label style="font-weight:600; font-size:14px; color:var(--color-text);">Motion InfoSlide (Optional)</label>
-            <textarea id="motion-info" rows="3" placeholder="Context or definitions..." style="width:100%; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 12px; font-size:14px; outline:none; resize:vertical; font-family:var(--font-family);" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor='var(--color-border-strong)'"></textarea>
-          </div>
+      ` : motionsHtml}
+    `;
 
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            <label style="font-weight:600; font-size:14px; color:var(--color-text);">Motion Text</label>
-            <textarea id="motion-text" required rows="4" placeholder="THBT..." style="width:100%; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 12px; font-size:14px; outline:none; resize:vertical; font-family:var(--font-family);" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor='var(--color-border-strong)'"></textarea>
-          </div>
-          
-          <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:8px;">
-            <button type="button" onclick="document.getElementById('add-motion-modal').style.display='none'" style="background:white; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; color:var(--color-text); cursor:pointer;">Cancel</button>
-            <button type="submit" style="background:#0044b3; border:none; border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; color:white; cursor:pointer; display:flex; align-items:center; gap:8px;">${icon('check', 16)} Save Motion</button>
-          </div>
-          
-        </form>
-      </div>
-    </div>
-  `;
+    renderAppLayout(container, '/tournament/motions', 'Motions', 'Manage debate topics', content);
+  };
 
-  renderAppLayout(
-    container,
-    '/tournament/motions',
-    '',
-    '',
-    content
-  );
+  fetchAndRender();
 }

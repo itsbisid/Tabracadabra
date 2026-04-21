@@ -1,7 +1,6 @@
-import { icon } from './icons.js';
-import { currentUser } from '../data/mock-data.js';
-
-export function createHeader(title, subtitle = '') {
+export function createHeader(title, subtitle = '', user) {
+  const initials = user?.initials || 'U';
+  const name = user?.name || 'User';
   return `
     <header style="display:flex; justify-content:space-between; align-items:center; padding:16px 24px; border-bottom:1px solid #E5E7EB; background:var(--color-bg-white);">
       <div>
@@ -18,8 +17,8 @@ export function createHeader(title, subtitle = '') {
         <button style="width:36px; height:36px; border-radius:50%; border:1px solid var(--color-border); background:var(--color-bg-white); color:var(--color-text-muted); display:flex; align-items:center; justify-content:center; cursor:pointer;" class="hover:bg-gray-50">
           ${icon('bell', 16)}
         </button>
-        <div style="width:36px; height:36px; border-radius:50%; background:#0F2B5B; color:white; display:flex; align-items:center; justify-content:center; font-weight:600; font-size:14px; cursor:pointer;" title="${currentUser.name}">
-          ${currentUser.initials}
+        <div style="width:36px; height:36px; border-radius:50%; background:#0F2B5B; color:white; display:flex; align-items:center; justify-content:center; font-weight:600; font-size:14px; cursor:pointer;" title="${name}">
+          ${initials}
         </div>
       </div>
     </header>

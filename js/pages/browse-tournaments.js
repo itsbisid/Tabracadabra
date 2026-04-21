@@ -1,40 +1,42 @@
 import { icon } from '../components/icons.js';
-import { tournaments } from '../data/mock-data.js';
+import { supabase } from '../lib/supabase.js';
 
-export function renderBrowseTournaments(container) {
+export async function renderBrowseTournaments(container) {
   container.className = 'layout-public anim-fade-in';
   
-  const tournamentCards = tournaments.map(t => {
+  const { data: tournaments, error } = await supabase
+    .from('tournaments')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  const tournamentCards = (tournaments || []).map(t => {
     let badgeClass = 'badge--draft';
-    if (t.status === 'active') badgeClass = 'badge--active';
+    if (t.status === 'active' || t.status === 'registration') badgeClass = 'badge--active';
     if (t.status === 'completed') badgeClass = 'badge--completed';
     
     return `
       <div class="tournament-card" onclick="tcNavigate('/login')">
         <div class="tournament-card__header">
-          <div class="tournament-card__name">${t.name}</div>
-          <span class="badge ${badgeClass}">${t.status.toUpperCase()}</span>
+          <div class="tournament-card__name">${t.short_name || t.name}</div>
+          <span class="badge ${badgeClass}">${(t.status || 'draft').toUpperCase()}</span>
         </div>
         <div class="tournament-card__meta">
           <div class="tournament-card__meta-item">
-            ${icon('calendar', 14)} ${t.date}
+            ${icon('calendar', 14)} ${t.start_date || 'TBD'}
           </div>
           <div class="tournament-card__meta-item">
-            ${icon('mapPin', 14)} ${t.location}
+            ${icon('mapPin', 14)} ${t.location || 'Online'}
           </div>
         </div>
-        <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 16px;">
-          ${t.description}
+        <div style="font-size: 13px; color: var(--color-text-muted); margin-bottom: 16px; min-height: 40px;">
+          ${t.description || 'No description provided.'}
         </div>
         <div style="display:flex; gap: 16px; border-top: 1px solid var(--color-border); padding-top: 12px; font-size: 12px; color: var(--color-text-muted);">
           <div style="display:flex; align-items:center; gap: 4px;">
-            ${icon('users', 14)} <span style="font-weight:600; color:var(--color-text);">${t.teams}</span> Teams
+            ${icon('users', 14)} BP Debate
           </div>
           <div style="display:flex; align-items:center; gap: 4px;">
-            ${icon('user', 14)} <span style="font-weight:600; color:var(--color-text);">${t.judges}</span> Judges
-          </div>
-          <div style="display:flex; align-items:center; gap: 4px;">
-            ${icon('fileText', 14)} <span style="font-weight:600; color:var(--color-text);">${t.format.split(' ')[0]}</span>
+            ${icon('fileText', 14)} 15m Prep
           </div>
         </div>
       </div>
@@ -76,7 +78,13 @@ export function renderBrowseTournaments(container) {
       </div>
 
       <div class="grid-2">
-        ${tournamentCards}
+        ${tournaments?.length > 0 ? tournamentCards : `
+          <div style="grid-column: 1 / -1; padding: 48px; text-align: center; background: #f9fafb; border-radius: 12px; border: 1px dashed var(--color-border-strong);">
+            <div style="font-size: 48px; margin-bottom: 16px;">🔍</div>
+            <h3 style="font-size:18px; margin-bottom:8px;">No tournaments found</h3>
+            <p style="color:var(--color-text-muted);">TabraCadabra is waiting for the first events of the season.</p>
+          </div>
+        `}
       </div>
     </main>
   `;

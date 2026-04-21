@@ -1,16 +1,16 @@
-import { icon } from './icons.js';
-import { currentUser } from '../data/mock-data.js';
-
-export function createSidebar(activePath) {
+export function createSidebar(activePath, user) {
   const isTournament = activePath.startsWith('/tournament/') && activePath !== '/tournaments';
   
   if (isTournament) {
-    return createTournamentSidebar(activePath);
+    return createTournamentSidebar(activePath, user);
   }
-  return createMainSidebar(activePath);
+  return createMainSidebar(activePath, user);
 }
 
-function createMainSidebar(activePath) {
+function createMainSidebar(activePath, user) {
+  const initials = user?.initials || 'U';
+  const name = user?.name || 'User';
+  const email = user?.email || '';
   return `
     <aside class="sidebar">
       <div class="sidebar__logo">
@@ -60,10 +60,10 @@ function createMainSidebar(activePath) {
 
       <div class="sidebar__user">
         <div class="sidebar__user-info">
-          <div class="sidebar__user-avatar">${currentUser.initials}</div>
+          <div class="sidebar__user-avatar">${initials}</div>
           <div>
-            <div class="sidebar__user-name">${currentUser.name}</div>
-            <div class="sidebar__user-email">${currentUser.email}</div>
+            <div class="sidebar__user-name">${name}</div>
+            <div class="sidebar__user-email">${email}</div>
           </div>
         </div>
         <a href="#/" class="sidebar__signout">

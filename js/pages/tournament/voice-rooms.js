@@ -1,32 +1,47 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
-import { tournamentDetail } from '../../data/mock-data.js';
+import { supabase } from '../../lib/supabase.js';
 
-export function renderVoiceRooms(container) {
-  const roomsHtml = tournamentDetail.voiceRooms.map(r => `
+export async function renderVoiceRooms(container) {
+  const tournamentId = localStorage.getItem('active_tournament_id');
+  const { data: tournament } = await supabase
+    .from('tournaments')
+    .select('name, short_name')
+    .eq('id', tournamentId)
+    .single();
+
+  const standardRooms = [
+    { name: 'General Assembly', desc: 'Main hall for announcements and social gathering', icon: 'mic' },
+    { name: 'Tab Office', desc: 'Direct support for directors and adjudicators', icon: 'shield' },
+    { name: 'Social Lounge', desc: 'Casual hangout between rounds', icon: 'coffee' }
+  ];
+
+  const roomsHtml = standardRooms.map(r => `
     <div class="voice-card">
       <div class="voice-card__left">
-        <div class="voice-card__icon bg-gray-100 rounded-md">${icon(r.icon)}</div>
-        <div>
-          <div class="voice-card__name">${r.name}</div>
-          <div class="voice-card__desc">${r.desc}</div>
+        <div class="voice-card__icon bg-gray-100 rounded-md" style="padding: 10px; background: #f1f5f9; border-radius: 8px; color: var(--color-primary);">${icon(r.icon, 20)}</div>
+        <div style="margin-left: 12px;">
+          <div class="voice-card__name" style="font-weight: 700; font-size: 14px;">${r.name}</div>
+          <div class="voice-card__desc" style="font-size: 12px; color: var(--color-text-muted);">${r.desc}</div>
         </div>
       </div>
-      <button class="btn btn--outline btn--sm">${icon('mic', 14)} Join</button>
+      <button class="btn btn--outline btn--sm" style="font-size: 12px; padding: 6px 12px; height: auto;">${icon('phone', 14)} Join</button>
     </div>
   `).join('');
 
   const content = `
-    <h3 class="font-bold mb-md mt-sm">General Rooms</h3>
-    <div class="grid-2 mb-xl">
-      ${roomsHtml}
-    </div>
+    <div style="margin-top: 12px;">
+        <h3 style="font-weight: 700; margin-bottom: 16px; font-size: 16px;">General Tournament Rooms</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px;">
+        ${roomsHtml}
+        </div>
 
-    <h3 class="font-bold mb-md">Debate Rooms</h3>
-    <div class="empty-state">
-      <div class="empty-state__icon">🎧</div>
-      <h3 class="empty-state__title">No active debate rooms</h3>
-      <p class="empty-state__text">Voice rooms for individual debates will appear here automatically when a round draw is released and doors are open.</p>
+        <h3 style="font-weight: 700; margin-bottom: 16px; font-size: 16px;">Active Round Rooms</h3>
+        <div style="background: white; border: 1px solid var(--color-border); border-radius: 12px; padding: 48px; text-align: center; border: 1px dashed var(--color-border-strong);">
+        <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">🎧</div>
+        <h3 style="font-weight: 700; margin-bottom: 8px;">No active debate rounds</h3>
+        <p style="color: var(--color-text-muted); font-size: 14px;">Individual debate rooms will appear here automatically when a round is live.</p>
+        </div>
     </div>
   `;
 
@@ -34,7 +49,7 @@ export function renderVoiceRooms(container) {
     container,
     '/tournament/voice-rooms',
     'Voice Rooms',
-    'Jitsi-powered voice/video channels',
+    tournament?.short_name || tournament?.name || 'Tournament Infrastructure',
     content
   );
 }

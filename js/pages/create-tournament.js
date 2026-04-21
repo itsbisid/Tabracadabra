@@ -1,7 +1,8 @@
 import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
+import { supabase } from '../lib/supabase.js';
 
-export function renderCreateTournament(container) {
+export async function renderCreateTournament(container) {
   const content = `
     <div style="max-width: 900px; margin: 0 auto;">
       
@@ -365,7 +366,7 @@ export function renderCreateTournament(container) {
     </div>
   `;
 
-  renderAppLayout(container, '/create-tournament', 'Host Tournament', 'Finalize your tournament settings and launch.', content);
+  await renderAppLayout(container, '/create-tournament', 'Host Tournament', 'Finalize your tournament settings and launch.', content);
 
   window.tcCreateTournament = async () => {
     const btn = document.querySelector('button[onclick="window.tcCreateTournament()"]');

@@ -1,15 +1,18 @@
 import { createSidebar } from './sidebar.js';
 import { createHeader } from './header.js';
 import { icon } from './icons.js';
+import { getCurrentUser } from '../lib/auth-utils.js';
 
-export function renderAppLayout(container, activePath, title, subtitle, contentHtml) {
+export async function renderAppLayout(container, activePath, title, subtitle, contentHtml) {
+  const user = await getCurrentUser();
+  
   container.innerHTML = `
     <div class="layout-app anim-fade-in">
       <div class="layout-app__sidebar" id="app-sidebar">
-        ${createSidebar(activePath)}
+        ${createSidebar(activePath, user)}
       </div>
       <main class="layout-app__main" id="app-main">
-        ${createHeader(title, subtitle)}
+        ${createHeader(title, subtitle, user)}
         <div class="layout-app__content relative">
           ${contentHtml}
         </div>
