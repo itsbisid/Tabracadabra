@@ -15,20 +15,22 @@ async function fetchMembershipRows(userId) {
 }
 
 export async function fetchUserTournaments(userId) {
-  const { data: owned = [], error: ownedError } = await supabase
+  const { data: owned, error: ownedError } = await supabase
     .from('tournaments')
     .select('*')
     .eq('owner_id', userId)
     .order('created_at', { ascending: false });
 
-  const { data: memberships = [], error: membershipError } = await fetchMembershipRows(userId);
+  const { data: memberships, error: membershipError } = await fetchMembershipRows(userId);
   const byId = new Map();
+  const ownedRows = Array.isArray(owned) ? owned : [];
+  const membershipRows = Array.isArray(memberships) ? memberships : [];
 
-  owned.forEach((tournament) => {
+  ownedRows.forEach((tournament) => {
     byId.set(tournament.id, { ...tournament, userRole: 'Director' });
   });
 
-  memberships.forEach((membership) => {
+  membershipRows.forEach((membership) => {
     const tournament = membership.tournaments || membership.tournament;
     if (!tournament?.id) return;
 
