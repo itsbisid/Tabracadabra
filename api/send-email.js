@@ -1,4 +1,4 @@
-import { hasEmailTransportConfig, sendMail } from './email-transport.js';
+import { hasEmailTransportConfig, sendMailToEach } from './email-transport.js';
 
 const MAX_RECIPIENTS = 5;
 const ADMIN_ROLES = new Set(['TAB_DIRECTOR', 'CONVENOR']);
@@ -251,14 +251,17 @@ export default async function handler(request, response) {
   }
 
   try {
-    const data = await sendMail({
+    const results = await sendMailToEach({
       to: recipients,
       subject: email.subject,
       html: email.html,
       text: email.text,
       idempotencyKey: payload.idempotencyKey || `tabracadabra-${Date.now()}`
     });
-    sendJson(response, 200, { id: data.id });
+    sendJson(response, 200, {
+      id: results.map(result => result.id).filter(Boolean).join(','),
+      results
+    });
   } catch (error) {
     sendJson(response, 502, {
       error: error.message || 'SMTP failed to send the email.'

@@ -1,5 +1,7 @@
 import nodemailer from 'nodemailer';
 
+const RETRY_DELAYS_MS = [600, 1500];
+
 function env(name) {
   return String(process.env[name] || '').trim();
 }
@@ -17,6 +19,44 @@ function parseSecure(value, port) {
 
 export function hasEmailTransportConfig() {
   return Boolean(env('SMTP_HOST') && env('SMTP_USER') && env('SMTP_PASS') && env('SMTP_FROM'));
+}
+
+function normalizeRecipients(to) {
+  return (Array.isArray(to) ? to : [to])
+    .map(email => String(email || '').trim())
+    .filter(Boolean);
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function shouldRetry(error) {
+  const code = String(error?.code || '');
+  const responseCode = Number(error?.responseCode || 0);
+  return code === 'ETIMEDOUT'
+    || code === 'ECONNECTION'
+    || code === 'ESOCKET'
+    || responseCode === 421
+    || responseCode === 450
+    || responseCode === 451
+    || responseCode === 452;
+}
+
+async function sendWithRetry(transporter, message) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await transporter.sendMail(message);
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetry(error) || attempt === RETRY_DELAYS_MS.length) break;
+      await wait(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
+  throw lastError;
 }
 
 export async function sendMail({ to, subject, html, text, idempotencyKey }) {
@@ -39,15 +79,46 @@ export async function sendMail({ to, subject, html, text, idempotencyKey }) {
     auth: { user, pass }
   });
 
-  const info = await transporter.sendMail({
+  const recipients = normalizeRecipients(to);
+  if (recipients.length === 0) throw new Error('A valid recipient email is required.');
+
+  const info = await sendWithRetry(transporter, {
     from,
-    to,
+    to: recipients,
+    sender: user,
     subject,
     html,
     text,
+    envelope: {
+      from: user,
+      to: recipients
+    },
     replyTo: replyTo || undefined,
     headers: idempotencyKey ? { 'X-TabraCadabra-Idempotency-Key': idempotencyKey } : undefined
   });
 
-  return { id: info.messageId };
+  return {
+    id: info.messageId,
+    accepted: info.accepted || [],
+    rejected: info.rejected || []
+  };
+}
+
+export async function sendMailToEach({ to, subject, html, text, idempotencyKey }) {
+  const recipients = normalizeRecipients(to);
+  const results = [];
+
+  for (const recipient of recipients) {
+    const result = await sendMail({
+      to: [recipient],
+      subject,
+      html,
+      text,
+      idempotencyKey: idempotencyKey ? `${idempotencyKey}-${recipient}` : undefined
+    });
+    results.push({ recipient, ...result });
+    await wait(250);
+  }
+
+  return results;
 }

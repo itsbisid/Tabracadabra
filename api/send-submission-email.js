@@ -106,7 +106,11 @@ export default async function handler(request, response) {
       text: email.text,
       idempotencyKey: payload.idempotencyKey || `tabracadabra-sub-${Date.now()}`
     });
-    sendJson(response, 200, { id: data.id });
+    sendJson(response, 200, {
+      id: data.id,
+      accepted: data.accepted,
+      rejected: data.rejected
+    });
   } catch (error) {
     sendJson(response, 502, {
       error: error.message || 'SMTP failed to send the email.'
