@@ -1,9 +1,9 @@
 // Mock data for TabraCadabra
 export const currentUser = {
-  id: 'u1',
-  name: 'Awinbisid Desmond-Bugbilla',
-  email: 'awinbisid951@gmail.com',
-  initials: 'A',
+  id: 'demo-user',
+  name: 'Demo User',
+  email: 'demo@example.com',
+  initials: 'DU',
   role: 'Tab Director',
 };
 
