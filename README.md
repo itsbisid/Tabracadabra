@@ -92,8 +92,17 @@
    SMTP_PASS=your_gmail_app_password
    SMTP_FROM=TabraCadabra <your_email@gmail.com>
    SMTP_REPLY_TO=your_email@gmail.com
+
+   ASHESI_SMTP_HOST=smtp.gmail.com
+   ASHESI_SMTP_PORT=465
+   ASHESI_SMTP_SECURE=true
+   ASHESI_SMTP_USER=your_ashesi_email@ashesi.edu.gh
+   ASHESI_SMTP_PASS=your_ashesi_google_app_password
+   ASHESI_SMTP_FROM=TabraCadabra <your_ashesi_email@ashesi.edu.gh>
+   ASHESI_SMTP_REPLY_TO=your_ashesi_email@ashesi.edu.gh
    ```
    Keep `SMTP_PASS` server-side only. Do not prefix it with `VITE_`.
+   If the Ashesi SMTP variables are set, emails to `@ashesi.edu.gh` recipients use the Ashesi sender automatically. Other recipients use the default SMTP sender.
 
 4. **Launch Development Server**
    ```bash

@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 
 const RETRY_DELAYS_MS = [600, 1500];
+const ASHESI_DOMAIN = '@ashesi.edu.gh';
 
 function env(name) {
   return String(process.env[name] || '').trim();
@@ -19,6 +20,33 @@ function parseSecure(value, port) {
 
 export function hasEmailTransportConfig() {
   return Boolean(env('SMTP_HOST') && env('SMTP_USER') && env('SMTP_PASS') && env('SMTP_FROM'));
+}
+
+function hasAshesiTransportConfig() {
+  return Boolean(
+    env('ASHESI_SMTP_HOST')
+    && env('ASHESI_SMTP_USER')
+    && env('ASHESI_SMTP_PASS')
+    && env('ASHESI_SMTP_FROM')
+  );
+}
+
+function getTransportConfig(recipient) {
+  const shouldUseAshesi = String(recipient || '').toLowerCase().endsWith(ASHESI_DOMAIN)
+    && hasAshesiTransportConfig();
+  const prefix = shouldUseAshesi ? 'ASHESI_' : '';
+  const port = parsePort(env(`${prefix}SMTP_PORT`));
+
+  return {
+    host: env(`${prefix}SMTP_HOST`),
+    user: env(`${prefix}SMTP_USER`),
+    pass: env(`${prefix}SMTP_PASS`),
+    from: env(`${prefix}SMTP_FROM`),
+    replyTo: env(`${prefix}SMTP_REPLY_TO`),
+    port,
+    secure: parseSecure(env(`${prefix}SMTP_SECURE`), port),
+    provider: shouldUseAshesi ? 'ashesi' : 'default'
+  };
 }
 
 function normalizeRecipients(to) {
@@ -60,13 +88,19 @@ async function sendWithRetry(transporter, message) {
 }
 
 export async function sendMail({ to, subject, html, text, idempotencyKey }) {
-  const host = env('SMTP_HOST');
-  const user = env('SMTP_USER');
-  const pass = env('SMTP_PASS');
-  const from = env('SMTP_FROM');
-  const replyTo = env('SMTP_REPLY_TO');
-  const port = parsePort(env('SMTP_PORT'));
-  const secure = parseSecure(env('SMTP_SECURE'), port);
+  const recipients = normalizeRecipients(to);
+  if (recipients.length === 0) throw new Error('A valid recipient email is required.');
+
+  const {
+    host,
+    user,
+    pass,
+    from,
+    replyTo,
+    port,
+    secure,
+    provider
+  } = getTransportConfig(recipients[0]);
 
   if (!host || !user || !pass || !from) {
     throw new Error('Missing SMTP email environment variables.');
@@ -78,9 +112,6 @@ export async function sendMail({ to, subject, html, text, idempotencyKey }) {
     secure,
     auth: { user, pass }
   });
-
-  const recipients = normalizeRecipients(to);
-  if (recipients.length === 0) throw new Error('A valid recipient email is required.');
 
   const info = await sendWithRetry(transporter, {
     from,
@@ -99,6 +130,7 @@ export async function sendMail({ to, subject, html, text, idempotencyKey }) {
 
   return {
     id: info.messageId,
+    provider,
     accepted: info.accepted || [],
     rejected: info.rejected || []
   };
