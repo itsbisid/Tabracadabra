@@ -144,7 +144,7 @@ export async function renderRegistrationLinks(container) {
       // 3. Update status to 'accepted'
       await supabase.from('registration_submissions').update({ status: 'accepted' }).eq('id', id);
       
-      // 4. Send the registration approval email through the server-side Resend endpoint.
+      // 4. Send the registration approval email through the server-side email endpoint.
       const teamPortalUrl = `${window.location.origin}/#/portal/team/${insertedRoster.id}`;
       const judgePortalUrl = `${window.location.origin}/#/portal/judge/${insertedRoster.id}`;
       const emails = sub.role === 'adjudicator'

@@ -1,6 +1,6 @@
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
-import { sendWelcomeEmail } from '../lib/email-service.js';
+import { escapeHtml } from '../lib/html.js';
 
 export function renderSignup(container, navigate) {
   container.className = '';
@@ -121,8 +121,18 @@ export function renderSignup(container, navigate) {
       });
 
       if (!error) {
-        sendWelcomeEmail({ name: nameInput.value }).catch(() => {});
-        navigate('/dashboard');
+        container.innerHTML = `
+          <div class="auth-page">
+            <div class="auth-card">
+              <div class="auth-card__logo">
+                <div style="width: 48px; height: 48px; margin: 0 auto; color: #0038A8;">${icon('logo', 48)}</div>
+              </div>
+              <h1 class="auth-card__title">Check your email</h1>
+              <p class="auth-card__subtitle">We sent a confirmation link to ${escapeHtml(emailInput.value)}. Confirm your account, then sign in to continue.</p>
+              <button class="auth-submit-btn" style="background: #0038A8;" onclick="location.hash = '/'">Back to sign in</button>
+            </div>
+          </div>
+        `;
       } else {
         alert(error.message);
       }

@@ -1,4 +1,5 @@
-const RESEND_EMAILS_URL = 'https://api.resend.com/emails';
+import { hasEmailTransportConfig, sendMail } from './email-transport.js';
+
 const MAX_RECIPIENTS = 5;
 const ADMIN_ROLES = new Set(['TAB_DIRECTOR', 'CONVENOR']);
 
@@ -211,12 +212,8 @@ export default async function handler(request, response) {
     return;
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
-  const replyTo = process.env.RESEND_REPLY_TO;
-
-  if (!apiKey || !from || !process.env.VITE_SUPABASE_URL || !process.env.VITE_SUPABASE_ANON_KEY) {
-    sendJson(response, 500, { error: 'Missing email or auth environment variables.' });
+  if (!hasEmailTransportConfig() || !process.env.VITE_SUPABASE_URL || !process.env.VITE_SUPABASE_ANON_KEY) {
+    sendJson(response, 500, { error: 'Missing SMTP email or auth environment variables.' });
     return;
   }
 
@@ -253,33 +250,18 @@ export default async function handler(request, response) {
     return;
   }
 
-  const resendPayload = {
-    from,
-    to: recipients,
-    subject: email.subject,
-    html: email.html,
-    text: email.text
-  };
-
-  if (replyTo) resendPayload.reply_to = replyTo;
-
-  const resendResponse = await fetch(RESEND_EMAILS_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'Idempotency-Key': payload.idempotencyKey || `tabracadabra-${Date.now()}`
-    },
-    body: JSON.stringify(resendPayload)
-  });
-
-  const data = await resendResponse.json().catch(() => ({}));
-  if (!resendResponse.ok) {
-    sendJson(response, resendResponse.status, {
-      error: data.message || data.error || 'Resend failed to send the email.'
+  try {
+    const data = await sendMail({
+      to: recipients,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      idempotencyKey: payload.idempotencyKey || `tabracadabra-${Date.now()}`
     });
-    return;
+    sendJson(response, 200, { id: data.id });
+  } catch (error) {
+    sendJson(response, 502, {
+      error: error.message || 'SMTP failed to send the email.'
+    });
   }
-
-  sendJson(response, 200, { id: data.id });
 }

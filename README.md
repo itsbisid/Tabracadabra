@@ -80,15 +80,20 @@
    ```
 
 3. **Environment Setup**
-   Create a `.env` file in the root and add your Supabase and Resend credentials:
+   Create a `.env` file in the root and add your Supabase credentials. Add SMTP settings only if you want app-triggered registration emails and private portal links to be sent automatically:
    ```env
    VITE_SUPABASE_URL=your_project_url
    VITE_SUPABASE_ANON_KEY=your_anon_key
-   RESEND_API_KEY=your_resend_api_key
-   RESEND_FROM_EMAIL=TabraCadabra <noreply@your-domain.com>
-   RESEND_REPLY_TO=support@your-domain.com
+
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=465
+   SMTP_SECURE=true
+   SMTP_USER=your_email@gmail.com
+   SMTP_PASS=your_gmail_app_password
+   SMTP_FROM=TabraCadabra <your_email@gmail.com>
+   SMTP_REPLY_TO=your_email@gmail.com
    ```
-   Keep `RESEND_API_KEY` server-side only. Do not prefix it with `VITE_`.
+   Keep `SMTP_PASS` server-side only. Do not prefix it with `VITE_`.
 
 4. **Launch Development Server**
    ```bash

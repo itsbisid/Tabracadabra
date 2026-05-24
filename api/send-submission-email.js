@@ -1,4 +1,4 @@
-const RESEND_EMAILS_URL = 'https://api.resend.com/emails';
+import { hasEmailTransportConfig, sendMail } from './email-transport.js';
 
 function sendJson(response, status, payload) {
   response.statusCode = status;
@@ -77,12 +77,8 @@ export default async function handler(request, response) {
     return;
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
-  const replyTo = process.env.RESEND_REPLY_TO;
-
-  if (!apiKey || !from) {
-    sendJson(response, 500, { error: 'Missing email environment variables.' });
+  if (!hasEmailTransportConfig()) {
+    sendJson(response, 500, { error: 'Missing SMTP email environment variables.' });
     return;
   }
 
@@ -102,33 +98,18 @@ export default async function handler(request, response) {
 
   const email = buildRegistrationSubmittedEmail(payload);
 
-  const resendPayload = {
-    from,
-    to: [to],
-    subject: email.subject,
-    html: email.html,
-    text: email.text
-  };
-
-  if (replyTo) resendPayload.reply_to = replyTo;
-
-  const resendResponse = await fetch(RESEND_EMAILS_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'Idempotency-Key': payload.idempotencyKey || `tabracadabra-sub-${Date.now()}`
-    },
-    body: JSON.stringify(resendPayload)
-  });
-
-  const data = await resendResponse.json().catch(() => ({}));
-  if (!resendResponse.ok) {
-    sendJson(response, resendResponse.status, {
-      error: data.message || data.error || 'Resend failed to send the email.'
+  try {
+    const data = await sendMail({
+      to: [to],
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+      idempotencyKey: payload.idempotencyKey || `tabracadabra-sub-${Date.now()}`
     });
-    return;
+    sendJson(response, 200, { id: data.id });
+  } catch (error) {
+    sendJson(response, 502, {
+      error: error.message || 'SMTP failed to send the email.'
+    });
   }
-
-  sendJson(response, 200, { id: data.id });
 }
