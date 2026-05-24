@@ -1,17 +1,23 @@
 import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
 import { getCurrentUser } from '../lib/auth-utils.js';
-import { supabase } from '../lib/supabase.js';
+import { fetchUserTournaments } from '../lib/tournament-service.js';
+import { setActiveTournamentId } from '../lib/tournament-context.js';
 
 export async function renderDashboard(container) {
   const user = await getCurrentUser();
+  if (!user) {
+    window.tcNavigate('/');
+    return;
+  }
   
-  // Fetch real tournaments
-  const { data: tournaments, error } = await supabase
-    .from('tournaments')
-    .select('*')
-    .eq('owner_id', user.id)
-    .order('created_at', { ascending: false });
+  const { data: tournaments, error } = await fetchUserTournaments(user.id);
+  if (error) console.error('Error fetching tournaments:', error);
+
+  window.tcOpenTournament = (id) => {
+    setActiveTournamentId(id);
+    window.tcNavigate('/tournament/dashboard');
+  };
 
   const activeCount = tournaments?.filter(t => t.status === 'active' || t.status === 'registration').length || 0;
 
@@ -115,7 +121,7 @@ export async function renderDashboard(container) {
       
       <div style="display:flex; flex-direction:column; gap:12px;">
         ${tournaments?.length > 0 ? tournaments.map(t => `
-          <div class="card card--clickable" style="padding:20px 24px; display:flex; justify-content:space-between; align-items:center; border:1px solid var(--color-border);" onclick="tcNavigate('/tournament/dashboard')">
+          <div class="card card--clickable" style="padding:20px 24px; display:flex; justify-content:space-between; align-items:center; border:1px solid var(--color-border);" onclick="window.tcOpenTournament('${t.id}')">
             <div style="display:flex; align-items:center; gap:16px;">
               <div style="font-weight:700; font-size:16px;">${t.short_name || t.name}</div>
             </div>

@@ -1,10 +1,13 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
-import { tournamentDetail } from '../../data/mock-data.js';
 import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { escapeHtml, escapeJsString } from '../../lib/html.js';
+import { sendRegistrationApprovedEmail } from '../../lib/email-service.js';
 
 export async function renderRegistrationLinks(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
   
   // Initialize helper functions
   window.tcAddField = () => {
@@ -139,9 +142,36 @@ export async function renderRegistrationLinks(container) {
       // 3. Update status to 'accepted'
       await supabase.from('registration_submissions').update({ status: 'accepted' }).eq('id', id);
       
-      // 4. Show PRO Email Modal
+      // 4. Send the registration approval email through the server-side Resend endpoint.
       const name = sub.role === 'adjudicator' ? sub.data.full_name : sub.data.team_name;
-      const email = sub.role === 'adjudicator' ? sub.data.email : sub.data.speaker1_email;
+      const recipients = sub.role === 'adjudicator'
+        ? [sub.data.email]
+        : [sub.data.speaker1_email, sub.data.speaker2_email].filter(Boolean);
+      const { data: tournament } = await supabase
+        .from('tournaments')
+        .select('name, short_name')
+        .eq('id', sub.tournament_id)
+        .single();
+
+      let emailResult = { sent: false, message: '' };
+      try {
+        await sendRegistrationApprovedEmail({
+          to: recipients,
+          name,
+          role: sub.role,
+          tournamentId: sub.tournament_id,
+          tournamentName: tournament?.short_name || tournament?.name || 'your tournament',
+          idempotencyKey: `registration-approved-${id}`
+        });
+        emailResult = { sent: true, message: `Approval email sent to ${recipients.join(', ')}.` };
+      } catch (emailError) {
+        emailResult = { sent: false, message: emailError.message };
+      }
+
+      const safeName = escapeHtml(name);
+      const safeNameJs = escapeJsString(name);
+      const safeRole = escapeHtml(sub.role);
+      const safeEmailMessage = escapeHtml(emailResult.message);
 
       const modalRoot = document.getElementById('modal-root');
       modalRoot.innerHTML = `
@@ -156,16 +186,19 @@ export async function renderRegistrationLinks(container) {
             </div>
             <div style="padding:32px;">
                <div style="font-size:15px; color:#334155; line-height:1.6; margin-bottom:24px;">
-                 <strong>Success!</strong> ${name} is now part of the roster. Here is the welcome email that was generated for them:
+                 <strong>Success!</strong> ${safeName} is now part of the roster.
+               </div>
+               <div style="background:${emailResult.sent ? '#ECFDF5' : '#FEF2F2'}; border:1px solid ${emailResult.sent ? '#A7F3D0' : '#FECACA'}; color:${emailResult.sent ? '#047857' : '#B91C1C'}; border-radius:10px; padding:12px 14px; font-size:13px; font-weight:600; margin-bottom:20px;">
+                 ${emailResult.sent ? icon('mail', 16) : icon('alertCircle', 16)} ${safeEmailMessage}
                </div>
                <div style="background:var(--color-bg-white); border:1px solid #e2e8f0; border-radius:12px; padding:20px; font-size:13px; color:#475569; position:relative;">
                  <div style="font-weight:700; color:var(--color-text); margin-bottom:12px;">Subject: Registration Approved!</div>
-                 Hi ${name},<br><br>
-                 Your registration as a ${sub.role} has been approved! You can now access your tournament dashboard for draws, check-ins, and announcements.<br><br>
+                 Hi ${safeName},<br><br>
+                 Your registration as a ${safeRole} has been approved! You can now access your tournament dashboard for draws, check-ins, and announcements.<br><br>
                  Access your portal: <strong>${window.location.origin}/#/dashboard</strong>
                </div>
                <div style="margin-top:24px; display:flex; gap:12px;">
-                 <button onclick="navigator.clipboard.writeText('Hi ${name}, your registration has been approved...').then(() => alert('Copied!'))" class="btn btn--primary" style="flex:1;">Copy Content</button>
+                 <button onclick="navigator.clipboard.writeText('Hi ${safeNameJs}, your registration has been approved...').then(() => alert('Copied!'))" class="btn btn--primary" style="flex:1;">Copy Content</button>
                  <button onclick="document.getElementById('modal-root').innerHTML=''" class="btn btn--outline" style="flex:1;">Done</button>
                </div>
             </div>
@@ -224,6 +257,7 @@ export async function renderRegistrationLinks(container) {
     const { data } = await supabase
       .from('registration_links')
       .select('*')
+      .eq('tournament_id', tournamentId)
       .order('created_at', { ascending: false });
 
     renderLinksUI(data || []);
@@ -233,6 +267,7 @@ export async function renderRegistrationLinks(container) {
     const { data } = await supabase
       .from('registration_submissions')
       .select('*')
+      .eq('tournament_id', tournamentId)
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
 
@@ -245,22 +280,30 @@ export async function renderRegistrationLinks(container) {
     
     container.innerHTML = links.length === 0 
       ? `<div style="font-size:13px; color:var(--color-text-muted); padding:20px; text-align:center; background:#f8fafc; border-radius:8px; border:1px dashed var(--color-border);">No active registration links.</div>`
-      : links.map(link => `
+      : links.map(link => {
+        const label = escapeHtml(link.label);
+        const token = escapeHtml(link.token);
+        const tokenJs = escapeJsString(link.token);
+        const linkId = escapeJsString(link.id);
+        const roles = Array.isArray(link.roles) ? link.roles.map(escapeHtml).join(' / ') : 'Team / Adjudicator';
+
+        return `
         <div style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:16px; display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <div>
             <div style="font-weight:700; font-size:14px; margin-bottom:4px;">
-               ${link.label} ${link.is_paused ? '<span style="font-size:9px; color:#EF4444; background:#FEE2E2; padding:2px 4px; border-radius:4px; margin-left:8px;">PAUSED</span>' : ''}
+               ${label} ${link.is_paused ? '<span style="font-size:9px; color:#EF4444; background:#FEE2E2; padding:2px 4px; border-radius:4px; margin-left:8px;">PAUSED</span>' : ''}
             </div>
-            <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:8px;">${link.roles.join(' / ')}</div>
-            <div style="font-size:11px; color:var(--color-primary); background:var(--color-info-bg); padding:4px 8px; border-radius:4px; border:1px solid #BFDBFE;">/#/reg/${link.token}</div>
+            <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:8px;">${roles}</div>
+            <div style="font-size:11px; color:var(--color-primary); background:var(--color-info-bg); padding:4px 8px; border-radius:4px; border:1px solid #BFDBFE;">/#/reg/${token}</div>
           </div>
           <div style="display:flex; gap:8px;">
-            <button onclick="window.tcCopyRegLink('${window.location.origin}/#/reg/${link.token}', this)" class="btn btn--outline" style="padding:6px 12px; font-size:12px; display:flex; align-items:center; gap:6px;">${icon('copy', 12)} Copy</button>
-            <button onclick="window.tcPauseRegLink('${link.id}', this)" class="btn btn--outline" style="padding:6px 12px; font-size:12px;">${link.is_paused ? 'Resume' : 'Pause'}</button>
-            <button onclick="window.tcDeleteRegLink('${link.id}', this)" class="btn btn--outline" style="padding:6px 12px; font-size:12px; color:var(--color-danger);">${icon('trash', 12)}</button>
+            <button onclick="window.tcCopyRegLink('${window.location.origin}/#/reg/${tokenJs}', this)" class="btn btn--outline" style="padding:6px 12px; font-size:12px; display:flex; align-items:center; gap:6px;">${icon('copy', 12)} Copy</button>
+            <button onclick="window.tcPauseRegLink('${linkId}', this)" class="btn btn--outline" style="padding:6px 12px; font-size:12px;">${link.is_paused ? 'Resume' : 'Pause'}</button>
+            <button onclick="window.tcDeleteRegLink('${linkId}', this)" class="btn btn--outline" style="padding:6px 12px; font-size:12px; color:var(--color-danger);">${icon('trash', 12)}</button>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
   };
 
   const renderQueueUI = (subs) => {
@@ -272,25 +315,33 @@ export async function renderRegistrationLinks(container) {
     
     container.innerHTML = subs.length === 0 
       ? `<div style="font-size:13px; color:var(--color-text-muted);">No pending submissions at the moment.</div>`
-      : subs.map(sub => `
+      : subs.map(sub => {
+        const subId = escapeJsString(sub.id);
+        const role = escapeHtml(sub.role || 'team');
+        const name = escapeHtml(sub.data?.team_name || sub.data?.full_name || 'Unnamed registration');
+        const institution = escapeHtml(sub.data?.institution || '');
+        const contacts = escapeHtml(sub.data?.email || [sub.data?.speaker1_email, sub.data?.speaker2_email].filter(Boolean).join(', '));
+
+        return `
         <div style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:flex-start;">
           <div>
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-               <span style="font-size:10px; font-weight:800; background:${sub.role==='adjudicator'?'#ECFDF5':'#EFF6FF'}; color:${sub.role==='adjudicator'?'#10B981':'#3B82F6'}; padding:2px 6px; border-radius:4px; text-transform:uppercase;">${sub.role}</span>
-               <span style="font-weight:700; font-size:14px;">${sub.data.team_name || sub.data.full_name}</span>
+               <span style="font-size:10px; font-weight:800; background:${sub.role==='adjudicator'?'#ECFDF5':'#EFF6FF'}; color:${sub.role==='adjudicator'?'#10B981':'#3B82F6'}; padding:2px 6px; border-radius:4px; text-transform:uppercase;">${role}</span>
+               <span style="font-weight:700; font-size:14px;">${name}</span>
             </div>
             <div style="font-size:12px; color:var(--color-text-muted); line-height:1.4;">
-               <div>${sub.data.institution}</div>
-               <div style="margin-top:4px; font-weight:500;">Contacts: ${sub.data.email || (sub.data.speaker1_email + ', ' + sub.data.speaker2_email)}</div>
+               <div>${institution}</div>
+               <div style="margin-top:4px; font-weight:500;">Contacts: ${contacts}</div>
             </div>
           </div>
           <div style="display:flex; gap:8px;">
-            <button onclick="window.tcEditSubmission('${sub.id}')" class="btn btn--outline" style="padding:6px 12px; font-size:12px;">Edit</button>
-            <button onclick="window.tcAcceptSubmission('${sub.id}', this)" class="btn btn--primary" style="padding:6px 16px; font-size:12px;">Accept</button>
-            <button onclick="window.tcRejectSubmission('${sub.id}')" class="btn btn--outline" style="padding:6px 12px; font-size:12px; color:var(--color-danger); border-color:#FEE2E2;">Decline</button>
+            <button onclick="window.tcEditSubmission('${subId}')" class="btn btn--outline" style="padding:6px 12px; font-size:12px;">Edit</button>
+            <button onclick="window.tcAcceptSubmission('${subId}', this)" class="btn btn--primary" style="padding:6px 16px; font-size:12px;">Accept</button>
+            <button onclick="window.tcRejectSubmission('${subId}')" class="btn btn--outline" style="padding:6px 12px; font-size:12px; color:var(--color-danger); border-color:#FEE2E2;">Decline</button>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
   };
 
   const initialContent = `
@@ -417,9 +468,13 @@ export async function renderRegistrationLinks(container) {
   fetchSubmissions();
 
   // Setup Real-time Listener for Submissions
-  supabase
-    .channel('public:registration_submissions')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'registration_submissions' }, (payload) => {
+  if (window.tcRegistrationChannel) {
+    supabase.removeChannel(window.tcRegistrationChannel);
+  }
+
+  window.tcRegistrationChannel = supabase
+    .channel(`registration_submissions:${tournamentId}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'registration_submissions', filter: `tournament_id=eq.${tournamentId}` }, () => {
       // Notification
       if (document.visibilityState === 'visible') {
         const toast = document.createElement('div');

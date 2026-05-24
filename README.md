@@ -80,11 +80,15 @@
    ```
 
 3. **Environment Setup**
-   Create a `.env` file in the root and add your Supabase credentials:
+   Create a `.env` file in the root and add your Supabase and Resend credentials:
    ```env
    VITE_SUPABASE_URL=your_project_url
    VITE_SUPABASE_ANON_KEY=your_anon_key
+   RESEND_API_KEY=your_resend_api_key
+   RESEND_FROM_EMAIL=TabraCadabra <noreply@your-domain.com>
+   RESEND_REPLY_TO=support@your-domain.com
    ```
+   Keep `RESEND_API_KEY` server-side only. Do not prefix it with `VITE_`.
 
 4. **Launch Development Server**
    ```bash

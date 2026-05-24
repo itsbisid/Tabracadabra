@@ -5,6 +5,7 @@ export async function renderPublicRegistration(container, token) {
   let selectedRole = ''; // 'team', 'adjudicator', 'captain'
   let tournamentName = '...';
   let linkData = null;
+  let allowedRoles = [];
 
   // Initialize UI
   container.innerHTML = `
@@ -40,11 +41,11 @@ export async function renderPublicRegistration(container, token) {
                <div class="reg-card__desc">Register as a judge for the tournament</div>
              </div>
 
-             <!-- Captain Crunch -->
+             <!-- Swing Team -->
              <div onclick="window.tcSetRole('captain')" id="card-captain" class="reg-card">
                <div class="reg-card__icon">${icon('share', 24)}</div>
-               <div class="reg-card__title">Captain Crunch</div>
-               <div class="reg-card__desc">Register as a Captain Crunch team to fill empty slots</div>
+               <div class="reg-card__title">Swing Team</div>
+               <div class="reg-card__desc">Register as a reserve or composite team to fill empty slots</div>
              </div>
            </div>
 
@@ -174,7 +175,7 @@ export async function renderPublicRegistration(container, token) {
   // Helper: Get form fields HTML
   function getFieldsHTML(role) {
     if (role === 'team' || role === 'captain') {
-      const teamLabel = role === 'captain' ? 'Captain Crunch team name' : 'Team name';
+      const teamLabel = role === 'captain' ? 'Swing team name' : 'Team name';
       return `
         <div class="form-group">
           <label class="form-label">${teamLabel} <span>*</span></label>
@@ -244,6 +245,11 @@ export async function renderPublicRegistration(container, token) {
 
   // Global handler for role switching
   window.tcSetRole = (role) => {
+    if (!allowedRoles.includes(role)) {
+      alert('This registration link is not open for that role.');
+      return;
+    }
+
     selectedRole = role;
     
     // UI Visuals
@@ -313,19 +319,47 @@ export async function renderPublicRegistration(container, token) {
   };
 
   // Initial Fetch Data
-  const { data, error } = await supabase
+  let response = await supabase
     .from('registration_links')
-    .select('*')
+    .select('*, tournament:tournaments(name, short_name)')
     .eq('token', token)
     .single();
+
+  if (response.error) {
+    response = await supabase
+      .from('registration_links')
+      .select('*')
+      .eq('token', token)
+      .single();
+  }
+
+  const { data, error } = response;
 
   if (error || !data) {
     container.innerHTML = `<div style="padding: 100px; text-align: center; color: #ef4444; font-weight: 700;">Invalid or expired registration link magic.</div>`;
     return;
   }
 
+  if (data.is_paused) {
+    container.innerHTML = `<div style="padding: 100px; text-align: center; color: #ef4444; font-weight: 700;">This registration link is currently paused.</div>`;
+    return;
+  }
+
+  if (data.expires_at && new Date(data.expires_at).getTime() < Date.now()) {
+    container.innerHTML = `<div style="padding: 100px; text-align: center; color: #ef4444; font-weight: 700;">This registration link has expired.</div>`;
+    return;
+  }
+
   linkData = data;
-  tournamentName = data.tournament?.name || 'SDFG';
+  allowedRoles = (data.roles || ['Team', 'Adjudicator']).map(role => String(role).toLowerCase());
+  tournamentName = data.tournament?.short_name || data.tournament?.name || 'Tournament';
+
+  ['team', 'adjudicator', 'captain'].forEach((role) => {
+    const card = document.getElementById(`card-${role}`);
+    if (card && !allowedRoles.includes(role)) {
+      card.style.display = 'none';
+    }
+  });
   
   document.getElementById('loading-state').style.display = 'none';
   document.getElementById('content-row').style.display = 'block';

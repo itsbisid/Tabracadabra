@@ -3,9 +3,11 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { BPEngine } from '../../lib/bp-engine.js';
 import { isTabVisible, isAdmin } from '../../lib/auth-helpers.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 
 export async function renderTeamStandings(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
 
   const fetchAndRender = async () => {
     const visible = await isTabVisible(tournamentId);

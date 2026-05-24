@@ -1,3 +1,5 @@
+import { icon } from './icons.js';
+
 export function createHeader(title, subtitle = '', user) {
   const initials = user?.initials || 'U';
   const name = user?.name || 'User';

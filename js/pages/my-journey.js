@@ -2,6 +2,7 @@ import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
 import { isFeedbackBlocked } from '../lib/feedback-lock.js';
+import { getActiveTournamentId } from '../lib/tournament-context.js';
 
 export async function renderMyJourney(container) {
   const hash = window.location.hash;
@@ -12,17 +13,23 @@ export async function renderMyJourney(container) {
 
   let profile = null;
   let blocked = false;
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  let tournamentId = getActiveTournamentId();
 
   if (speakerId) {
     const { data } = await supabase.from('teams').select('*').eq('id', speakerId).single();
-    profile = data ? { id: data.id, name: data.speaker1_name || data.speaker2_name, role: 'TEAM', inst: data.institution } : null;
+    if (data) {
+      tournamentId = data.tournament_id || tournamentId;
+      profile = { id: data.id, name: data.speaker1_name || data.speaker2_name, role: 'TEAM', inst: data.institution };
+    }
   } else if (judgeId) {
     const { data } = await supabase.from('adjudicators').select('*').eq('id', judgeId).single();
-    profile = data ? { id: data.id, name: data.name, role: 'JUDGE', inst: data.institution } : null;
+    if (data) {
+      tournamentId = data.tournament_id || tournamentId;
+      profile = { id: data.id, name: data.name, role: 'JUDGE', inst: data.institution };
+    }
   }
 
-  if (profile) {
+  if (profile && tournamentId) {
     blocked = await isFeedbackBlocked(profile.id, tournamentId, profile.role);
   }
 

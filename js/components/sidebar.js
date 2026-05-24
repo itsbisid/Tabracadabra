@@ -1,8 +1,12 @@
+import { icon } from './icons.js';
+import { supabase } from '../lib/supabase.js';
+import { getActiveTournamentId } from '../lib/tournament-context.js';
+
 export async function createSidebar(activePath, user) {
   const isTournament = activePath.startsWith('/tournament/') && activePath !== '/tournaments';
   
   if (isTournament) {
-    const tournamentId = localStorage.getItem('active_tournament_id');
+    const tournamentId = getActiveTournamentId();
     let tournament = null;
     if (tournamentId) {
       const { data } = await supabase.from('tournaments').select('*').eq('id', tournamentId).single();
@@ -72,13 +76,15 @@ function createMainSidebar(activePath, user) {
             <div class="sidebar__user-email">${email}</div>
           </div>
         </div>
-        <a href="#/" class="sidebar__signout">
+        <a href="javascript:void(0)" onclick="window.tcSignOut()" class="sidebar__signout">
           <span class="sidebar__link-icon">${icon('signout')}</span>
           Sign out
         </a>
       </div>
     </aside>
   `;
+}
+
 function createTournamentSidebar(activePath, user, tournament) {
   return `
     <aside class="sidebar">

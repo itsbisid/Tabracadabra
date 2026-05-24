@@ -1,6 +1,7 @@
 import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
+import { setActiveTournamentId } from '../lib/tournament-context.js';
 
 export async function renderCreateTournament(container) {
   const content = `
@@ -53,41 +54,41 @@ export async function renderCreateTournament(container) {
           
           <div class="form-group" style="margin:0;">
             <label class="form-label">Tournament Name <span style="color:var(--color-danger)">*</span></label>
-            <input type="text" class="form-input" placeholder="Enter tournament name">
+            <input type="text" id="tournament-name" class="form-input" placeholder="Enter tournament name">
           </div>
           
           <div class="form-group" style="margin:0;">
             <label class="form-label">Short Name <span style="color:var(--color-danger)">*</span></label>
-            <input type="text" class="form-input" placeholder="e.g. WUDC 2026">
+            <input type="text" id="tournament-short-name" class="form-input" placeholder="e.g. WUDC 2026">
           </div>
           
           <div class="form-group" style="margin:0;">
             <label class="form-label">Description <span style="color:var(--color-danger)">*</span></label>
-            <textarea class="form-input form-textarea" placeholder="Tell us more about your tournament"></textarea>
+            <textarea id="tournament-description" class="form-input form-textarea" placeholder="Tell us more about your tournament"></textarea>
           </div>
           
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
             <div class="form-group" style="margin:0;">
               <label class="form-label">Start Date <span style="color:var(--color-danger)">*</span></label>
-              <input type="date" class="form-input">
+              <input type="date" id="tournament-start-date" class="form-input">
             </div>
             <div class="form-group" style="margin:0;">
               <label class="form-label">End Date <span style="color:var(--color-danger)">*</span></label>
-              <input type="date" class="form-input">
+              <input type="date" id="tournament-end-date" class="form-input">
             </div>
           </div>
           
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
             <div class="form-group" style="margin:0;">
               <label class="form-label">Timezone <span style="color:var(--color-danger)">*</span></label>
-              <select class="form-input form-select">
+              <select id="tournament-timezone" class="form-input form-select">
                 <option>GMT</option>
                 <option>EST</option>
               </select>
             </div>
             <div class="form-group" style="margin:0;">
               <label class="form-label">Location <span style="color:var(--color-danger)">*</span></label>
-              <input type="text" class="form-input" placeholder="e.g. Accra, Ghana">
+              <input type="text" id="tournament-location" class="form-input" placeholder="e.g. Accra, Ghana">
             </div>
           </div>
           
@@ -107,7 +108,7 @@ export async function renderCreateTournament(container) {
           <div style="display:flex; flex-direction:column; gap:8px;">
             <label style="font-weight:600; font-size:14px;">Competition tracks</label>
             <div style="font-size:13px; color:var(--color-text-muted);">Choose what this tournament runs first — debate tab, public speaking, or both. Options below update to match.</div>
-            <select class="form-input form-select" style="margin-top:4px;">
+            <select id="tournament-tracks" class="form-input form-select" style="margin-top:4px;">
               <option>Debate only</option>
               <option>Debate + Public speaking</option>
               <option>Public speaking only</option>
@@ -117,7 +118,7 @@ export async function renderCreateTournament(container) {
           <div style="display:flex; flex-direction:column; gap:8px;">
             <label style="font-weight:600; font-size:14px;">Debate format</label>
             <div style="font-size:13px; color:var(--color-text-muted);">Draw and tab logic still assume BP for now; your choice is stored for display and future formats.</div>
-            <select class="form-input form-select" style="margin-top:4px;">
+            <select id="tournament-format" class="form-input form-select" style="margin-top:4px;">
               <option>British Parliamentary (BP)</option>
               <option>WSDC</option>
               <option>Asian Parliamentary</option>
@@ -126,7 +127,7 @@ export async function renderCreateTournament(container) {
           
           <div style="display:flex; flex-direction:column; gap:8px;">
             <label style="font-weight:600; font-size:14px;">Tournament structure</label>
-            <select class="form-input form-select" style="margin-top:4px;">
+            <select id="tournament-structure" class="form-input form-select" style="margin-top:4px;">
               <option>Prelims + break + out-rounds (standard BP)</option>
               <option>Round robin → straight break to finals</option>
               <option>Gold Coast (round robin + power pairing → break to finals)</option>
@@ -140,15 +141,15 @@ export async function renderCreateTournament(container) {
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;">
               <div>
                 <label style="font-size:12px; color:var(--color-text-muted); display:block; margin-bottom:4px;">Minimum</label>
-                <input type="number" class="form-input" value="50">
+                <input type="number" id="tournament-min-points" class="form-input" value="50">
               </div>
               <div>
                 <label style="font-size:12px; color:var(--color-text-muted); display:block; margin-bottom:4px;">Maximum</label>
-                <input type="number" class="form-input" value="100">
+                <input type="number" id="tournament-max-points" class="form-input" value="100">
               </div>
               <div>
                 <label style="font-size:12px; color:var(--color-text-muted); display:block; margin-bottom:4px;">Step</label>
-                <select class="form-input form-select">
+                <select id="tournament-point-step" class="form-input form-select">
                   <option>1.0</option>
                   <option>0.5</option>
                 </select>
@@ -301,19 +302,19 @@ export async function renderCreateTournament(container) {
           <h4 style="font-weight:700; font-size:13px; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">Basic Info</h4>
           <div style="display:grid; grid-template-columns:180px 1fr; gap:12px; font-size:14px; align-items:start;">
             <div style="color:var(--color-text-muted);">Name:</div>
-            <div style="font-weight:500;">m</div>
+            <div id="review-name" style="font-weight:500;">Not set</div>
             
             <div style="color:var(--color-text-muted);">Short Name:</div>
-            <div style="font-weight:500;">mn nm</div>
+            <div id="review-short-name" style="font-weight:500;">Not set</div>
             
             <div style="color:var(--color-text-muted);">Dates:</div>
-            <div style="font-weight:500;">2026-04-29 to 2026-04-24</div>
+            <div id="review-dates" style="font-weight:500;">Not set</div>
             
             <div style="color:var(--color-text-muted);">Location:</div>
-            <div style="font-weight:500;">nm</div>
+            <div id="review-location" style="font-weight:500;">Not set</div>
             
             <div style="color:var(--color-text-muted);">Description:</div>
-            <div style="font-weight:500;">mm</div>
+            <div id="review-description" style="font-weight:500;">Not set</div>
           </div>
         </div>
 
@@ -322,23 +323,23 @@ export async function renderCreateTournament(container) {
           <h4 style="font-weight:700; font-size:13px; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">Format & Scoring</h4>
           <div style="display:grid; grid-template-columns:180px 1fr; gap:12px; font-size:14px; align-items:start;">
             <div style="color:var(--color-text-muted);">Tracks:</div>
-            <div style="font-weight:500;">Debate only</div>
+            <div id="review-tracks" style="font-weight:500;">Debate only</div>
           </div>
           
           <div style="height:1px; background:var(--color-border); margin:16px 0;"></div>
           
           <div style="display:grid; grid-template-columns:180px 1fr; gap:12px; font-size:14px; align-items:start;">
             <div style="color:var(--color-text-muted);">Debate format:</div>
-            <div style="font-weight:500;">British Parliamentary (BP)</div>
+            <div id="review-format" style="font-weight:500;">British Parliamentary (BP)</div>
             
             <div style="color:var(--color-text-muted);">Structure:</div>
-            <div style="font-weight:500;">Prelims + break + out-rounds (standard BP)</div>
+            <div id="review-structure" style="font-weight:500;">Prelims + break + out-rounds (standard BP)</div>
             
             <div style="color:var(--color-text-muted);">Speaker points:</div>
             <div style="font-weight:500;">50 – 100 (step: 1)</div>
             
             <div style="color:var(--color-text-muted);">Reply speeches:</div>
-            <div style="font-weight:500;">Enabled</div>
+            <div id="review-replies" style="font-weight:500;">Disabled</div>
 
             <div style="color:var(--color-text-muted);">Team points:</div>
             <div style="font-weight:500;">3 / 2 / 1 / 0</div>
@@ -377,23 +378,37 @@ export async function renderCreateTournament(container) {
     const getVal = (selector) => document.querySelector(selector)?.value || '';
 
     const newTournament = {
-      name: getVal('#wizard-step-1 input[placeholder="Enter tournament name"]'),
-      short_name: getVal('#wizard-step-1 input[placeholder="e.g. WUDC 2026"]'),
-      description: getVal('#wizard-step-1 textarea'),
-      start_date: getVal('#wizard-step-1 input[type="date"]:nth-of-type(1)'),
-      end_date: getVal('#wizard-step-1 input[type="date"]:nth-of-type(2)'),
-      timezone: getVal('#wizard-step-1 select'),
-      location: getVal('#wizard-step-1 input[placeholder="e.g. Accra, Ghana"]'),
+      name: getVal('#tournament-name').trim(),
+      short_name: getVal('#tournament-short-name').trim(),
+      description: getVal('#tournament-description').trim(),
+      start_date: getVal('#tournament-start-date'),
+      end_date: getVal('#tournament-end-date'),
+      timezone: getVal('#tournament-timezone'),
+      location: getVal('#tournament-location').trim(),
       settings: {
-        tracks: getVal('#wizard-step-2 select:nth-of-type(1)'),
-        format: getVal('#wizard-step-2 select:nth-of-type(2)'),
-        structure: getVal('#wizard-step-2 select:nth-of-type(3)'),
-        min_points: getVal('#wizard-step-2 input[type="number"]:nth-of-type(1)'),
-        max_points: getVal('#wizard-step-2 input[type="number"]:nth-of-type(2)'),
-        point_step: getVal('#wizard-step-2 select:nth-of-type(4)'),
+        tracks: getVal('#tournament-tracks'),
+        format: getVal('#tournament-format'),
+        structure: getVal('#tournament-structure'),
+        min_points: Number(getVal('#tournament-min-points')),
+        max_points: Number(getVal('#tournament-max-points')),
+        point_step: Number(getVal('#tournament-point-step')),
         replies_enabled: document.querySelector('#wizard-step-2 .tc-switch').classList.contains('tc-on')
       }
     };
+
+    if (!newTournament.name || !newTournament.short_name || !newTournament.description || !newTournament.start_date || !newTournament.end_date || !newTournament.location) {
+      alert('Please complete all required tournament details before creating.');
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      return;
+    }
+
+    if (new Date(newTournament.end_date) < new Date(newTournament.start_date)) {
+      alert('End date cannot be before start date.');
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      return;
+    }
 
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
@@ -421,7 +436,7 @@ export async function renderCreateTournament(container) {
       btn.disabled = false;
       btn.innerHTML = originalText;
     } else {
-      localStorage.setItem('active_tournament_id', data);
+      setActiveTournamentId(data);
       window.tcNavigate('/tournament/dashboard');
     }
   };
@@ -430,15 +445,22 @@ export async function renderCreateTournament(container) {
     // Refresh review step if going to step 4
     if (step === 4) {
         const getV = (sel) => document.querySelector(sel)?.value || 'N/A';
-        const reviewBox = document.getElementById('wizard-step-4');
-        if(reviewBox) {
-            // Update review fields dynamically
-            const nameReview = reviewBox.querySelector('div div:nth-child(2)');
-            if(nameReview) nameReview.innerText = getV('#wizard-step-1 input[placeholder="Enter tournament name"]');
-            
-            const shortNameReview = reviewBox.querySelector('div div:nth-child(4)');
-            if(shortNameReview) shortNameReview.innerText = getV('#wizard-step-1 input[placeholder="e.g. WUDC 2026"]');
-        }
+        const setText = (id, value) => {
+          const el = document.getElementById(id);
+          if (el) el.innerText = value || 'Not set';
+        };
+
+        setText('review-name', getV('#tournament-name'));
+        setText('review-short-name', getV('#tournament-short-name'));
+        setText('review-dates', `${getV('#tournament-start-date')} to ${getV('#tournament-end-date')}`);
+        setText('review-location', getV('#tournament-location'));
+        setText('review-description', getV('#tournament-description'));
+        setText('review-tracks', getV('#tournament-tracks'));
+        setText('review-format', getV('#tournament-format'));
+        setText('review-structure', getV('#tournament-structure'));
+        const speakerPointsReview = document.getElementById('review-speaker-points') || Array.from(document.querySelectorAll('#wizard-step-4 div')).find(el => el.textContent === 'Speaker points:')?.nextElementSibling;
+        if (speakerPointsReview) speakerPointsReview.innerText = `${getV('#tournament-min-points')} to ${getV('#tournament-max-points')} (step: ${getV('#tournament-point-step')})`;
+        setText('review-replies', document.querySelector('#wizard-step-2 .tc-switch')?.classList.contains('tc-on') ? 'Enabled' : 'Disabled');
     }
 
     // Hide all

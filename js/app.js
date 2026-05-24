@@ -26,9 +26,13 @@ import { renderSpeakerTab } from './pages/tournament/speaker-tab.js';
 import { renderTeamStandings } from './pages/tournament/team-standings.js';
 import { renderFeedback } from './pages/tournament/feedback.js';
 import { renderAnalytics } from './pages/tournament/analytics.js';
+import { supabase } from './lib/supabase.js';
+import { signOut } from './lib/auth-utils.js';
+import { getActiveTournamentId } from './lib/tournament-context.js';
 
 const routes = {
   '/': renderLogin,
+  '/login': renderLogin,
   '/signup': renderSignup,
   '/dashboard': renderDashboard,
   '/my-journey': renderMyJourney,
@@ -56,6 +60,8 @@ const routes = {
   '/tournament/analytics': renderAnalytics,
 };
 
+const publicRoutes = new Set(['/', '/login', '/signup', '/tournaments']);
+
 function getRoute() {
   const hash = window.location.hash.slice(1) || '/';
   return hash;
@@ -65,7 +71,7 @@ function navigate(path) {
   window.location.hash = path;
 }
 
-function router() {
+async function router() {
   const path = getRoute();
   const app = document.getElementById('app');
 
@@ -76,6 +82,22 @@ function router() {
       app.innerHTML = '';
       module.renderPublicRegistration(app, token);
     });
+    return;
+  }
+
+  const isAuthRedirect = path.includes('access_token=') || path.includes('error=');
+  const isProtectedRoute = !publicRoutes.has(path) && !isAuthRedirect;
+
+  if (isProtectedRoute) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      navigate('/');
+      return;
+    }
+  }
+
+  if (path.startsWith('/tournament/') && !getActiveTournamentId()) {
+    navigate('/my-tournaments');
     return;
   }
 
@@ -97,8 +119,8 @@ function router() {
 
 // Global navigate function
 window.tcNavigate = navigate;
+window.tcSignOut = signOut;
 
 window.addEventListener('hashchange', router);
 window.addEventListener('DOMContentLoaded', router);
 // HMR trigger
-

@@ -1,9 +1,11 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 
 export async function renderChat(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id');
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
   const { data: tournament } = await supabase
     .from('tournaments')
     .select('*')

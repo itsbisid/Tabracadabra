@@ -1,13 +1,11 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 
 export async function renderTournamentDashboard(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id');
-  if (!tournamentId) {
-    window.tcNavigate('/dashboard');
-    return;
-  }
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
 
   const fetchStats = async () => {
     // Fetch Tournament Info

@@ -104,11 +104,14 @@ export function showBallotModal(pairing, onSave) {
           points: points,
           s1_points: s1,
           s2_points: s2,
-          speaker_points: s1 + s2
+          speaker_points: s1 + s2,
+          status: 'LOCKED'
         };
       });
 
-      const { error } = await supabase.from('ballots').upsert(ballots);
+      const { error } = await supabase.from('ballots').upsert(ballots, {
+        onConflict: 'pairing_id,team_id'
+      });
       if (error) throw error;
 
       modalRoot.innerHTML = '';

@@ -1,17 +1,18 @@
 import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
-import { supabase } from '../lib/supabase.js';
 import { getCurrentUser } from '../lib/auth-utils.js';
+import { setActiveTournamentId } from '../lib/tournament-context.js';
+import { fetchUserTournaments } from '../lib/tournament-service.js';
 
 export async function renderMyTournaments(container) {
   const user = await getCurrentUser();
+  if (!user) {
+    window.tcNavigate('/');
+    return;
+  }
 
   const fetchTournaments = async () => {
-    const { data, error } = await supabase
-      .from('tournaments')
-      .select('*')
-      .eq('owner_id', user.id)
-      .order('created_at', { ascending: false });
+    const { data, error } = await fetchUserTournaments(user.id);
 
     if (error) {
       console.error('Error fetching:', error);
@@ -22,7 +23,7 @@ export async function renderMyTournaments(container) {
   };
 
   window.tcSelectTournament = (id) => {
-    localStorage.setItem('active_tournament_id', id);
+    setActiveTournamentId(id);
     window.tcNavigate('/tournament/dashboard');
   };
 
@@ -43,7 +44,7 @@ export async function renderMyTournaments(container) {
               ${icon('calendar', 14)} ${t.start_date || 'TBD'}
             </div>
             <div class="tournament-card__meta-item">
-              <span class="badge badge--role">Director</span>
+              <span class="badge badge--role">${t.userRole || 'Member'}</span>
             </div>
           </div>
         </div>

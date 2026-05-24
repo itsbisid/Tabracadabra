@@ -1,9 +1,12 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { escapeHtml, escapeJsString } from '../../lib/html.js';
 
 export async function renderTeams(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
 
   window.tcShareTeamURL = (id, name, speakerName) => {
     const url = `${window.location.origin}/#/team/${id}/progress?speaker=${encodeURIComponent(speakerName)}`;
@@ -97,59 +100,72 @@ export async function renderTeams(container) {
           </thead>
           <tbody>
             ${teams.map(team => {
-              const speakers = [team.speaker1_name, team.speaker2_name].filter(Boolean).join(', ');
+              const teamId = escapeJsString(team.id);
+              const teamName = escapeHtml(team.name);
+              const teamNameJs = escapeJsString(team.name);
+              const institution = escapeHtml(team.institution || '-');
+              const speaker1Name = escapeHtml(team.speaker1_name || '-');
+              const speaker1NameJs = escapeJsString(team.speaker1_name || '');
+              const speaker2Name = escapeHtml(team.speaker2_name || '-');
+              const speaker2NameJs = escapeJsString(team.speaker2_name || '');
+              const speaker1Eligibility = escapeHtml(team.speaker1_eligibility || 'OPEN');
+              const speaker2Eligibility = escapeHtml(team.speaker2_eligibility || 'OPEN');
+              const division = escapeHtml(team.division || 'Open');
+              const manualCategory = escapeHtml(team.manual_category_override || 'Auto');
+              const status = escapeHtml(team.status || 'Active');
+              const speakers = [team.speaker1_name, team.speaker2_name].filter(Boolean).map(escapeHtml).join(', ');
               return `
               <tr style="border-bottom:1px solid #e2e8f0; transition:background 0.2s;">
                 <td style="padding:16px;"><input type="checkbox"></td>
                 <td style="padding:16px;">
                   <div style="display:flex; align-items:center; gap:8px;">
                     <div>
-                      <div style="font-weight:700; color:var(--color-text);">${team.name}</div>
+                      <div style="font-weight:700; color:var(--color-text);">${teamName}</div>
                       <div style="font-size:11px; color:#64748b;">${speakers}</div>
                     </div>
-                    <span onclick="window.tcUpdateTeamField('${team.id}', 'name', '${team.name}')" style="color:#94a3b8; cursor:pointer;">${icon('pencil', 12)}</span>
+                    <span onclick="window.tcUpdateTeamField('${teamId}', 'name', '${teamNameJs}')" style="color:#94a3b8; cursor:pointer;">${icon('pencil', 12)}</span>
                   </div>
                 </td>
-                <td style="padding:16px; color:#64748b;">${team.institution || '-'}</td>
+                <td style="padding:16px; color:#64748b;">${institution}</td>
                 <td style="padding:16px;">
                   <div style="display:flex; align-items:center; gap:8px;">
                     <div style="font-size:13px; color:var(--color-text);">
                       <div style="display:flex; align-items:center; gap:6px;">
-                        <span>${team.speaker1_name || '-'}</span>
-                        <span onclick="window.tcUpdateTeamField('${team.id}', 'speaker1_eligibility', '${team.speaker1_eligibility || 'OPEN'}')" style="background:#f1f5f9; color:#64748b; font-size:9px; padding:2px 4px; border-radius:4px; font-weight:700; cursor:pointer;" title="Set Eligibility">${team.speaker1_eligibility || 'OPEN'}</span>
-                        <span onclick="window.tcCopyProgressLink('${team.id}', '${team.speaker1_name}')" style="color:var(--color-primary); cursor:pointer;" title="Copy S1 Progress Link">${icon('link', 10)}</span>
+                        <span>${speaker1Name}</span>
+                        <span onclick="window.tcUpdateTeamField('${teamId}', 'speaker1_eligibility', '${escapeJsString(team.speaker1_eligibility || 'OPEN')}')" style="background:#f1f5f9; color:#64748b; font-size:9px; padding:2px 4px; border-radius:4px; font-weight:700; cursor:pointer;" title="Set Eligibility">${speaker1Eligibility}</span>
+                        <span onclick="window.tcCopyProgressLink('${teamId}', '${speaker1NameJs}')" style="color:var(--color-primary); cursor:pointer;" title="Copy S1 Progress Link">${icon('link', 10)}</span>
                       </div>
                       <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
-                        <span>${team.speaker2_name || '-'}</span>
-                        <span onclick="window.tcUpdateTeamField('${team.id}', 'speaker2_eligibility', '${team.speaker2_eligibility || 'OPEN'}')" style="background:#f1f5f9; color:#64748b; font-size:9px; padding:2px 4px; border-radius:4px; font-weight:700; cursor:pointer;" title="Set Eligibility">${team.speaker2_eligibility || 'OPEN'}</span>
-                        <span onclick="window.tcCopyProgressLink('${team.id}', '${team.speaker2_name}')" style="color:var(--color-primary); cursor:pointer;" title="Copy S2 Progress Link">${icon('link', 10)}</span>
+                        <span>${speaker2Name}</span>
+                        <span onclick="window.tcUpdateTeamField('${teamId}', 'speaker2_eligibility', '${escapeJsString(team.speaker2_eligibility || 'OPEN')}')" style="background:#f1f5f9; color:#64748b; font-size:9px; padding:2px 4px; border-radius:4px; font-weight:700; cursor:pointer;" title="Set Eligibility">${speaker2Eligibility}</span>
+                        <span onclick="window.tcCopyProgressLink('${teamId}', '${speaker2NameJs}')" style="color:var(--color-primary); cursor:pointer;" title="Copy S2 Progress Link">${icon('link', 10)}</span>
                       </div>
                     </div>
                   </div>
                 </td>
                 <td style="padding:16px;">
                   <div style="display:flex; flex-direction:column; gap:4px;">
-                    <div style="display:flex; align-items:center; gap:6px; cursor:pointer;" onclick="window.tcUpdateTeamField('${team.id}', 'division', '${team.division || ''}')">
-                      <span style="color:#64748b; font-size:12px;">Div: ${team.division || 'Open'}</span>
+                    <div style="display:flex; align-items:center; gap:6px; cursor:pointer;" onclick="window.tcUpdateTeamField('${teamId}', 'division', '${escapeJsString(team.division || '')}')">
+                      <span style="color:#64748b; font-size:12px;">Div: ${division}</span>
                       <span style="color:#94a3b8;">${icon('pencil', 10)}</span>
                     </div>
-                    <div style="display:flex; align-items:center; gap:6px; cursor:pointer;" onclick="window.tcUpdateTeamField('${team.id}', 'manual_category_override', '${team.manual_category_override || ''}')">
-                      <span style="color:var(--color-primary); font-size:11px; font-weight:700;">Logic: ${team.manual_category_override || 'Auto'}</span>
+                    <div style="display:flex; align-items:center; gap:6px; cursor:pointer;" onclick="window.tcUpdateTeamField('${teamId}', 'manual_category_override', '${escapeJsString(team.manual_category_override || '')}')">
+                      <span style="color:var(--color-primary); font-size:11px; font-weight:700;">Logic: ${manualCategory}</span>
                       <span style="color:#94a3b8;">${icon('pencil', 10)}</span>
                     </div>
                   </div>
                 </td>
                 <td style="padding:16px;">
                   <div style="display:flex; align-items:center; gap:12px;">
-                    <span style="background:#ECFDF5; color:#10B981; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">${team.status || 'Active'}</span>
-                    <button onclick="window.tcShareTeamURL('${team.id}', '${team.name}', '${team.speaker1_name}')" class="btn btn--outline btn--sm" style="font-size:10px; padding:4px 8px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
+                    <span style="background:#ECFDF5; color:#10B981; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">${status}</span>
+                    <button onclick="window.tcShareTeamURL('${teamId}', '${teamNameJs}', '${speaker1NameJs}')" class="btn btn--outline btn--sm" style="font-size:10px; padding:4px 8px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
                       ${icon('link', 12)} URL: S1
                     </button>
-                    <button onclick="window.tcShareTeamURL('${team.id}', '${team.name}', '${team.speaker2_name}')" class="btn btn--outline btn--sm" style="font-size:10px; padding:4px 8px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
+                    <button onclick="window.tcShareTeamURL('${teamId}', '${teamNameJs}', '${speaker2NameJs}')" class="btn btn--outline btn--sm" style="font-size:10px; padding:4px 8px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
                       ${icon('link', 12)} URL: S2
                     </button>
                     <button class="btn btn--outline btn--sm" style="font-size:11px; padding:4px 12px; height:auto; background:white; color:#64748b; border:1px solid #e2e8f0;">Deactivate</button>
-                    <button onclick="window.tcDeleteTeam('${team.id}')" style="color:#ef4444; border:none; background:none; cursor:pointer; padding:4px;">
+                    <button onclick="window.tcDeleteTeam('${teamId}')" style="color:#ef4444; border:none; background:none; cursor:pointer; padding:4px;">
                       ${icon('trash', 16)}
                     </button>
                   </div>
@@ -163,7 +179,11 @@ export async function renderTeams(container) {
     `;
 
     const content = `
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+        <div style="position:relative; width:300px; max-width:100%;">
+          <div style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8;">${icon('search', 16)}</div>
+          <input type="text" placeholder="Search teams..." style="width:100%; padding:10px 12px 10px 40px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; outline:none; transition:border 0.2s;">
+        </div>
         <div style="display:flex; gap:12px; align-items:center;">
           <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
           <button onclick="document.getElementById('add-team-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Team</button>
@@ -188,15 +208,6 @@ export async function renderTeams(container) {
           </form>
         </div>
       </div>
-        <div style="position:relative; width:300px;">
-          <div style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8;">${icon('search', 16)}</div>
-          <input type="text" placeholder="Search teams..." style="width:100%; padding:10px 12px 10px 40px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; outline:none; transition:border 0.2s; focus:border:var(--color-primary);">
-        </div>
-        <div style="display:flex; gap:12px;">
-          <button class="btn btn--outline" style="color:#64748b; font-size:13px; padding:8px 16px; border-color:#e2e8f0;">Delete Selected (0)</button>
-          <button class="btn btn--outline" style="color:#ef4444; border-color:#fee2e2; font-size:13px; padding:8px 16px;">Delete All Teams</button>
-        </div>
-      </div>
 
       ${teams.length === 0 ? `
         <div style="background:white; border:1px solid #e2e8f0; border-radius:12px; padding:64px; text-align:center;">
@@ -205,6 +216,8 @@ export async function renderTeams(container) {
           <p style="color:#64748b; font-size:14px;">Accepted registrations will appear here automatically.</p>
         </div>
       ` : tableHTML}
+    `;
+
     renderAppLayout(container, '/tournament/teams', 'Teams', 'Manage teams participating in this tournament', content);
   };
 

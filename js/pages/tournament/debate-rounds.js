@@ -3,9 +3,11 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { BPEngine } from '../../lib/bp-engine.js';
 import { showBallotModal } from '../../components/ballot-modal.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 
 export async function renderDebateRounds(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
   let timers = {};
   let targetPanelSize = 3;
@@ -122,11 +124,16 @@ export async function renderDebateRounds(container) {
       if (pError) throw pError;
 
       // 2. Map allocations to inserted pairing IDs
-      const finalAllocations = allocations.map(a => ({
-        pairing_id: insertedPairings[a.pairing_idx || 0].id,
-        adjudicator_id: a.adjudicator_id,
-        role: a.role
-      }));
+      const finalAllocations = allocations.map(a => {
+        const pairing = insertedPairings[a.pairing_idx ?? 0];
+        if (!pairing) throw new Error('Could not map adjudicator allocation to a pairing.');
+
+        return {
+          pairing_id: pairing.id,
+          adjudicator_id: a.adjudicator_id,
+          role: a.role
+        };
+      });
 
       const { error: aError } = await supabase.from('adjudicator_allocations').insert(finalAllocations);
       if (aError) throw aError;

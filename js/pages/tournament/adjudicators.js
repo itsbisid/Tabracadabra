@@ -1,9 +1,11 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 
 export async function renderAdjudicators(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
 
   window.tcUpdateJudgeField = async (id, field, currentVal) => {
     const newVal = prompt(`Update ${field}:`, currentVal);

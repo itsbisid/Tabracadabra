@@ -1,9 +1,11 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 
 export async function renderSettings(container) {
-  const tournamentId = localStorage.getItem('active_tournament_id') || 'clw123456789';
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
 
   const fetchSettings = async () => {
     const { data } = await supabase.from('tournaments').select('*').eq('id', tournamentId).single();

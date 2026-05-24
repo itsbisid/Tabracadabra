@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { clearActiveTournamentId } from './tournament-context.js';
 
 /**
  * Global Authentication Information
@@ -25,5 +26,6 @@ export async function getCurrentUser() {
 export async function signOut() {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
+  clearActiveTournamentId();
   window.location.hash = '/'; // Go to login/landing
 }

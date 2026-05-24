@@ -5,28 +5,40 @@ import { supabase } from './supabase.js';
  * Implements 5-step pairing for British Parliamentary debate.
  */
 export const BPEngine = {
+  shuffle: (items) => {
+    const shuffled = [...items];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  },
   
   /**
    * Main entry point to generate a draw for a round.
    */
   generateDraw: async (roundId, tournamentId, roundNum, targetPanelSize = 3) => {
     // 1. Fetch Data
-    const { data: teams } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
-    const { data: judges } = await supabase.from('adjudicators').select('*').eq('tournament_id', tournamentId).eq('status', 'Active');
-    const { data: prevPairings } = await supabase.from('draw_pairings').select('*').eq('tournament_id', tournamentId);
+    const { data: teams, error: teamError } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
+    const { data: judges, error: judgeError } = await supabase.from('adjudicators').select('*').eq('tournament_id', tournamentId).eq('status', 'Active');
+    const { data: prevPairings, error: pairingError } = await supabase.from('draw_pairings').select('*').eq('tournament_id', tournamentId);
+    if (teamError) throw teamError;
+    if (judgeError) throw judgeError;
+    if (pairingError) throw pairingError;
     
     if (!teams || teams.length < 4) throw new Error('Need at least 4 teams to generate a BP draw.');
+    if (teams.length % 4 !== 0) throw new Error('BP draws need a team count divisible by 4. Add swing teams or deactivate extras before generating pairings.');
 
     // 2. Step 1: Sorting Teams (The Ladder)
     let sortedTeams = [];
     if (roundNum === 1) {
-      sortedTeams = [...teams].sort(() => Math.random() - 0.5);
+      sortedTeams = BPEngine.shuffle(teams);
     } else {
       const standings = await BPEngine.calculateStandings(tournamentId, teams);
       sortedTeams = standings.sort((a, b) => {
         if (b.points !== a.points) return b.points - a.points;
         if (b.speaks !== a.speaks) return b.speaks - a.speaks;
-        return Math.random() - 0.5;
+        return a.name.localeCompare(b.name);
       });
     }
 
@@ -61,12 +73,16 @@ export const BPEngine = {
     const votingJudges = availableJudges.filter(j => !j.is_trainee);
     const trainees = availableJudges.filter(j => j.is_trainee);
 
+    if (votingJudges.length < pairings.length) {
+      throw new Error(`Need at least ${pairings.length} active voting adjudicators to chair this draw.`);
+    }
+
     // Pass 1: Assign Chairs (Top-Down)
     pairings.forEach((p, idx) => {
       if (votingJudges.length > 0) {
         const judge = votingJudges.shift();
         p.chair_id = judge.id;
-        allocations.push({ adjudicator_id: judge.id, role: 'CHAIR' });
+        allocations.push({ pairing_idx: idx, adjudicator_id: judge.id, role: 'CHAIR' });
       }
     });
 
@@ -110,14 +126,37 @@ export const BPEngine = {
   /**
    * Rough position balancing logic.
    */
-  allocatePositions: (teams, history) => {
+  allocatePositions: (teams, history = []) => {
     const roles = ['OG', 'OO', 'CG', 'CO'];
     const result = {};
-    
-    // For now, simplify: assign randomly but we could scan history for better balance
-    const shuffledRoles = [...roles].sort(() => Math.random() - 0.5);
-    teams.forEach((team, idx) => {
-      result[shuffledRoles[idx]] = team;
+
+    const roleColumns = {
+      OG: 'og_team_id',
+      OO: 'oo_team_id',
+      CG: 'cg_team_id',
+      CO: 'co_team_id'
+    };
+
+    const countsByTeam = new Map();
+    teams.forEach((team) => {
+      const counts = { OG: 0, OO: 0, CG: 0, CO: 0 };
+      history.forEach((pairing) => {
+        roles.forEach((role) => {
+          if (pairing[roleColumns[role]] === team.id) counts[role] += 1;
+        });
+      });
+      countsByTeam.set(team.id, counts);
+    });
+
+    BPEngine.shuffle(teams).forEach((team) => {
+      const availableRoles = roles.filter(role => !result[role]);
+      const counts = countsByTeam.get(team.id);
+      const bestRole = availableRoles.sort((a, b) => {
+        if (counts[a] !== counts[b]) return counts[a] - counts[b];
+        return roles.indexOf(a) - roles.indexOf(b);
+      })[0];
+
+      result[bestRole] = team;
     });
 
     return result;
