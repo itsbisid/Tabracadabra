@@ -29,6 +29,7 @@ import { renderAnalytics } from './pages/tournament/analytics.js';
 import { supabase } from './lib/supabase.js';
 import { signOut } from './lib/auth-utils.js';
 import { getActiveTournamentId } from './lib/tournament-context.js';
+import { renderPrivatePortal } from './pages/private-portal.js';
 
 const routes = {
   '/': renderLogin,
@@ -73,10 +74,11 @@ function navigate(path) {
 
 async function router() {
   const path = getRoute();
+  const routePath = path.split('?')[0];
   const app = document.getElementById('app');
 
   // Handle dynamic /reg/:token routes
-  if (path.startsWith('/reg/')) {
+  if (routePath.startsWith('/reg/')) {
     const token = path.split('/reg/')[1];
     import('./pages/public-registration.js').then(module => {
       app.innerHTML = '';
@@ -85,8 +87,39 @@ async function router() {
     return;
   }
 
+  if (routePath.startsWith('/portal/team/')) {
+    app.innerHTML = '';
+    renderPrivatePortal(app, 'team', routePath.split('/portal/team/')[1]);
+    return;
+  }
+
+  if (routePath.startsWith('/portal/judge/')) {
+    app.innerHTML = '';
+    renderPrivatePortal(app, 'judge', routePath.split('/portal/judge/')[1]);
+    return;
+  }
+
+  if (routePath.startsWith('/team/') && routePath.endsWith('/progress')) {
+    const teamId = routePath.split('/')[2];
+    app.innerHTML = '';
+    renderPrivatePortal(app, 'team', teamId);
+    return;
+  }
+
+  if (routePath === '/my-journey' && path.includes('?')) {
+    const params = new URLSearchParams(path.split('?')[1]);
+    const speakerId = params.get('speaker_id');
+    const judgeId = params.get('judge_id');
+
+    if (speakerId || judgeId) {
+      app.innerHTML = '';
+      renderPrivatePortal(app, speakerId ? 'team' : 'judge', speakerId || judgeId);
+      return;
+    }
+  }
+
   const isAuthRedirect = path.includes('access_token=') || path.includes('error=');
-  const isProtectedRoute = !publicRoutes.has(path) && !isAuthRedirect;
+  const isProtectedRoute = !publicRoutes.has(routePath) && !isAuthRedirect;
 
   if (isProtectedRoute) {
     const { data: { session } } = await supabase.auth.getSession();
@@ -96,12 +129,12 @@ async function router() {
     }
   }
 
-  if (path.startsWith('/tournament/') && !getActiveTournamentId()) {
+  if (routePath.startsWith('/tournament/') && !getActiveTournamentId()) {
     navigate('/my-tournaments');
     return;
   }
 
-  const render = routes[path];
+  const render = routes[routePath];
   if (render) {
     app.innerHTML = '';
     render(app, navigate);

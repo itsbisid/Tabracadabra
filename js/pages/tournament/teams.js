@@ -9,7 +9,7 @@ export async function renderTeams(container) {
   if (!tournamentId) return;
 
   window.tcShareTeamURL = (id, name, speakerName) => {
-    const url = `${window.location.origin}/#/team/${id}/progress?speaker=${encodeURIComponent(speakerName)}`;
+    const url = `${window.location.origin}/#/portal/team/${id}?speaker=${encodeURIComponent(speakerName || '')}`;
     navigator.clipboard.writeText(url).then(() => {
       alert(`Progress URL for ${speakerName} copied to clipboard!`);
     });
@@ -24,7 +24,7 @@ export async function renderTeams(container) {
   };
 
   window.tcCopyProgressLink = (id, name) => {
-    const url = `${window.location.origin}/#/my-journey?speaker_id=${id}`;
+    const url = `${window.location.origin}/#/portal/team/${id}`;
     navigator.clipboard.writeText(url).then(() => {
       alert(`Progress URL for ${name} copied to clipboard!`);
     });

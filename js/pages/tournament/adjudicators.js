@@ -16,7 +16,7 @@ export async function renderAdjudicators(container) {
   };
 
   window.tcCopyProgressLink = (id, name) => {
-    const url = `${window.location.origin}/#/my-journey?judge_id=${id}`;
+    const url = `${window.location.origin}/#/portal/judge/${id}`;
     navigator.clipboard.writeText(url).then(() => {
       alert(`Progress URL for judge ${name} copied to clipboard!`);
     });
