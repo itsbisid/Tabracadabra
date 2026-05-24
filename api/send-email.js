@@ -44,41 +44,118 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function buildRegistrationApprovedEmail(payload) {
+function buildWelcomeEmail(payload) {
   const name = escapeHtml(payload.name || 'there');
-  const tournamentName = escapeHtml(payload.tournamentName || 'your tournament');
-  const role = escapeHtml(payload.role || 'participant');
   const dashboardUrl = escapeHtml(payload.dashboardUrl || '');
 
   return {
-    subject: `Registration approved for ${tournamentName}`,
+    subject: 'Welcome to TabraCadabra',
     text: [
       `Hi ${payload.name || 'there'},`,
       '',
-      `Your registration as a ${payload.role || 'participant'} for ${payload.tournamentName || 'your tournament'} has been approved.`,
-      dashboardUrl ? `Access your dashboard here: ${payload.dashboardUrl}` : '',
+      "Welcome to TabraCadabra — your home for managing and competing in debate tournaments.",
       '',
-      'See you at the tournament,',
+      dashboardUrl ? `Open your dashboard: ${payload.dashboardUrl}` : '',
+      '',
+      'See you in the tab room,',
       'TabraCadabra'
     ].filter(Boolean).join('\n'),
     html: `
-      <div style="font-family:Inter,Arial,sans-serif; color:#0f172a; line-height:1.6;">
-        <h1 style="font-size:22px; margin:0 0 12px;">Registration approved</h1>
-        <p>Hi ${name},</p>
-        <p>Your registration as a <strong>${role}</strong> for <strong>${tournamentName}</strong> has been approved.</p>
-        ${dashboardUrl ? `<p><a href="${dashboardUrl}" style="color:#0044b3; font-weight:700;">Open your dashboard</a></p>` : ''}
-        <p style="margin-top:24px;">See you at the tournament,<br>TabraCadabra</p>
+      <div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;color:#0f172a;line-height:1.6;">
+        <div style="background:#0038A8;padding:32px;border-radius:12px 12px 0 0;text-align:center;">
+          <div style="color:white;font-size:24px;font-weight:800;letter-spacing:-0.5px;">TabraCadabra</div>
+        </div>
+        <div style="background:white;padding:40px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;">
+          <h1 style="font-size:22px;font-weight:800;margin:0 0 16px;">Welcome, ${name}.</h1>
+          <p style="color:#475569;margin:0 0 24px;">You're in. TabraCadabra is your home for managing and competing in debate tournaments — from registration through to results.</p>
+          ${dashboardUrl ? `<a href="${dashboardUrl}" style="display:inline-block;background:#0038A8;color:white;font-weight:700;font-size:15px;padding:14px 28px;border-radius:8px;text-decoration:none;">Open your dashboard</a>` : ''}
+          <p style="color:#94a3b8;font-size:13px;margin-top:40px;">See you in the tab room,<br>TabraCadabra</p>
+        </div>
+      </div>
+    `
+  };
+}
+
+function buildAdjudicatorApprovedEmail(payload) {
+  const name = escapeHtml(payload.name || 'there');
+  const tournamentName = escapeHtml(payload.tournamentName || 'your tournament');
+  const dashboardUrl = escapeHtml(payload.dashboardUrl || '');
+
+  return {
+    subject: `You're in — ${payload.tournamentName || 'your tournament'} | Adjudicator`,
+    text: [
+      `Hi ${payload.name || 'there'},`,
+      '',
+      `Your application to adjudicate at ${payload.tournamentName || 'your tournament'} has been approved.`,
+      '',
+      dashboardUrl ? `Open your judge portal: ${payload.dashboardUrl}` : '',
+      '',
+      'Use your portal to check draws, receive feedback assignments, and stay updated throughout the tournament.',
+      '',
+      'See you in the tab room,',
+      'TabraCadabra'
+    ].filter(Boolean).join('\n'),
+    html: `
+      <div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;color:#0f172a;line-height:1.6;">
+        <div style="background:#10b981;padding:32px;border-radius:12px 12px 0 0;text-align:center;">
+          <div style="color:white;font-size:24px;font-weight:800;letter-spacing:-0.5px;">TabraCadabra</div>
+        </div>
+        <div style="background:white;padding:40px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;">
+          <h1 style="font-size:22px;font-weight:800;margin:0 0 8px;">You're in.</h1>
+          <p style="color:#475569;margin:0 0 24px;">Hi ${name}, your application to adjudicate at <strong>${tournamentName}</strong> has been approved.</p>
+          ${dashboardUrl ? `<a href="${dashboardUrl}" style="display:inline-block;background:#10b981;color:white;font-weight:700;font-size:15px;padding:14px 28px;border-radius:8px;text-decoration:none;">Open judge portal</a>` : ''}
+          <p style="color:#64748b;font-size:14px;margin-top:24px;">Use your portal to check draws, receive feedback assignments, and stay updated throughout the tournament.</p>
+          <p style="color:#94a3b8;font-size:13px;margin-top:40px;">See you in the tab room,<br>TabraCadabra</p>
+        </div>
+      </div>
+    `
+  };
+}
+
+function buildSpeakerApprovedEmail(payload) {
+  const name = escapeHtml(payload.name || 'there');
+  const teamName = escapeHtml(payload.teamName || 'your team');
+  const tournamentName = escapeHtml(payload.tournamentName || 'your tournament');
+  const dashboardUrl = escapeHtml(payload.dashboardUrl || '');
+
+  return {
+    subject: `You're in — ${payload.tournamentName || 'your tournament'} | ${payload.teamName || 'Team'}`,
+    text: [
+      `Hi ${payload.name || 'there'},`,
+      '',
+      `Your team ${payload.teamName || 'your team'} has been registered for ${payload.tournamentName || 'your tournament'}.`,
+      '',
+      dashboardUrl ? `Open your team portal: ${payload.dashboardUrl}` : '',
+      '',
+      'Use your portal to check draws, room allocations, and announcements as the tournament unfolds.',
+      '',
+      'See you across the floor,',
+      'TabraCadabra'
+    ].filter(Boolean).join('\n'),
+    html: `
+      <div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;color:#0f172a;line-height:1.6;">
+        <div style="background:#0038A8;padding:32px;border-radius:12px 12px 0 0;text-align:center;">
+          <div style="color:white;font-size:24px;font-weight:800;letter-spacing:-0.5px;">TabraCadabra</div>
+        </div>
+        <div style="background:white;padding:40px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;">
+          <h1 style="font-size:22px;font-weight:800;margin:0 0 8px;">You're in.</h1>
+          <p style="color:#475569;margin:0 0 24px;">Hi ${name}, your team <strong>${teamName}</strong> has been registered for <strong>${tournamentName}</strong>.</p>
+          ${dashboardUrl ? `<a href="${dashboardUrl}" style="display:inline-block;background:#0038A8;color:white;font-weight:700;font-size:15px;padding:14px 28px;border-radius:8px;text-decoration:none;">Open team portal</a>` : ''}
+          <p style="color:#64748b;font-size:14px;margin-top:24px;">Use your portal to check draws, room allocations, and announcements as the tournament unfolds.</p>
+          <p style="color:#94a3b8;font-size:13px;margin-top:40px;">See you across the floor,<br>TabraCadabra</p>
+        </div>
       </div>
     `
   };
 }
 
 function buildEmail(payload) {
-  if (payload.template === 'registration-approved') {
-    return buildRegistrationApprovedEmail(payload);
+  switch (payload.template) {
+    case 'welcome': return buildWelcomeEmail(payload);
+    case 'adjudicator-approved': return buildAdjudicatorApprovedEmail(payload);
+    case 'speaker-approved': return buildSpeakerApprovedEmail(payload);
+    default: throw new Error('Unsupported email template.');
   }
-
-  throw new Error('Unsupported email template.');
 }
 
 async function getSessionContext(request) {
@@ -163,7 +240,7 @@ export default async function handler(request, response) {
     return;
   }
 
-  if (!(await canAdministerTournament(session, payload.tournamentId))) {
+  if (payload.template !== 'welcome' && !(await canAdministerTournament(session, payload.tournamentId))) {
     sendJson(response, 403, { error: 'You do not have permission to send email for this tournament.' });
     return;
   }

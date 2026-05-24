@@ -159,12 +159,14 @@ export async function renderRegistrationLinks(container) {
               to: sub.data.speaker1_email,
               name: sub.data.speaker1_name || sub.data.team_name,
               role: 'team speaker',
+              teamName: sub.data.team_name,
               dashboardUrl: `${teamPortalUrl}?speaker=${encodeURIComponent(sub.data.speaker1_name || '')}`
             },
             {
               to: sub.data.speaker2_email,
               name: sub.data.speaker2_name || sub.data.team_name,
               role: 'team speaker',
+              teamName: sub.data.team_name,
               dashboardUrl: `${teamPortalUrl}?speaker=${encodeURIComponent(sub.data.speaker2_name || '')}`
             }
           ].filter(email => email.to);

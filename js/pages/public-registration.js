@@ -1,5 +1,6 @@
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
+import { sendRegistrationSubmittedEmail } from '../lib/email-service.js';
 
 export async function renderPublicRegistration(container, token) {
   let selectedRole = ''; // 'team', 'adjudicator', 'captain'
@@ -300,6 +301,23 @@ export async function renderPublicRegistration(container, token) {
       if (error) {
         alert('Error submitting registration: ' + error.message);
       } else {
+        const recipients = role === 'adjudicator'
+          ? [{ to: submission.data.email, name: submission.data.full_name }]
+          : [
+              { to: submission.data.speaker1_email, name: submission.data.speaker1_name },
+              { to: submission.data.speaker2_email, name: submission.data.speaker2_name }
+            ].filter(r => r.to);
+
+        recipients.forEach(r => {
+          sendRegistrationSubmittedEmail({
+            to: r.to,
+            name: r.name,
+            role: role === 'adjudicator' ? 'adjudicator' : 'speaker',
+            tournamentName,
+            idempotencyKey: `reg-submitted-${linkData.id}-${r.to}`
+          }).catch(() => {});
+        });
+
         container.innerHTML = `
            <div style="min-height: 100vh; background: #f8fafc; display: flex; align-items: center; justify-content: center; padding: 40px; font-family: 'Inter', sans-serif;">
             <div style="background: white; border: 1px solid #e2e8f0; border-radius: 20px; width: 100%; max-width: 600px; padding: 60px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">

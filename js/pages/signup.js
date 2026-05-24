@@ -1,5 +1,6 @@
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
+import { sendWelcomeEmail } from '../lib/email-service.js';
 
 export function renderSignup(container, navigate) {
   container.className = '';
@@ -120,7 +121,7 @@ export function renderSignup(container, navigate) {
       });
 
       if (!error) {
-        // With "Confirm Email" OFF, users are logged in immediately
+        sendWelcomeEmail({ name: nameInput.value }).catch(() => {});
         navigate('/dashboard');
       } else {
         alert(error.message);
