@@ -209,7 +209,7 @@ function renderFeedbackCard(role, profile, pairings, blocked) {
     .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
 
   return `
-    <section class="portal-card">
+    <section id="portal-feedback-card" class="portal-card">
       <div class="portal-card__heading">${icon('messageSquare', 18)} Feedback</div>
       ${!latest ? `
         <p class="portal-muted">Feedback forms will appear here after a completed round.</p>
@@ -248,6 +248,198 @@ function renderCheckInCard(tournament) {
   `;
 }
 
+function getTournamentName(tournament) {
+  return tournament?.short_name || tournament?.name || 'Tournament';
+}
+
+function getPersonalName(role, profile) {
+  const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+  const speakerName = params.get('speaker');
+
+  if (role === 'judge') return profile.name || 'Adjudicator';
+  return speakerName || profile.speaker1_name || profile.speaker2_name || profile.name || 'Speaker';
+}
+
+function getTeamSpeakers(profile) {
+  return [profile.speaker1_name, profile.speaker2_name].filter(Boolean).join(', ') || 'Not provided';
+}
+
+function getSpeakerCategory(profile, personalName) {
+  if (personalName === profile.speaker2_name) return profile.speaker2_eligibility || profile.division || 'Open';
+  return profile.speaker1_eligibility || profile.division || 'Open';
+}
+
+function getBreakCategory(profile) {
+  return profile.manual_category_override || profile.division || getSpeakerCategory(profile, profile.speaker1_name) || 'Open';
+}
+
+function renderPortalNav(tournament) {
+  return `
+    <nav class="portal-nav">
+      <div class="portal-brand">
+        <div class="portal-brand-mark">${icon('logo', 22)}</div>
+        <span>${escapeHtml(getTournamentName(tournament))}</span>
+        <span style="color:#64748b;">${icon('chevronDown', 14)}</span>
+      </div>
+      <div class="portal-links">
+        <span>Team Tab</span>
+        <span>Speaker Tab</span>
+        <span>Motions Tab</span>
+        <span>Results</span>
+        <span>Break</span>
+        <span>Participants</span>
+        <span>Institutions</span>
+      </div>
+      <span class="portal-login">Login</span>
+    </nav>
+  `;
+}
+
+function renderWarning(personName) {
+  return `
+    <div class="portal-warning">
+      ${icon('alertCircle', 20)}
+      <div>
+        The URL of this page is personalised to you, ${escapeHtml(personName)}.
+        <strong>Do not share it with anyone;</strong> anyone who knows this URL can submit results and/or feedback for your debates.
+        You may bookmark this page and return here after each debate for the available actions.
+      </div>
+    </div>
+  `;
+}
+
+function getOpenBallots(role, pairings) {
+  if (role !== 'judge') return [];
+
+  return pairings.filter(pairing => {
+    const isReleased = pairing.rounds?.status === 'Released';
+    const hasBallot = Array.isArray(pairing.ballots) && pairing.ballots.length > 0;
+    return isReleased && !hasBallot;
+  });
+}
+
+function renderActionRows(role, tournament, pairings) {
+  const onlineCheckIn = Boolean(tournament?.settings?.online_check_in || tournament?.settings?.onlineCheckIn || tournament?.settings?.check_in_enabled);
+  const openBallots = getOpenBallots(role, pairings);
+
+  return `
+    <section class="portal-action-list">
+      <button class="portal-action-row" type="button" onclick="alert('Push notifications are not enabled yet.')">
+        <span>${icon('bell', 20)} Subscribe to Push Notifications</span>
+        ${icon('chevronRight', 18)}
+      </button>
+      <div class="portal-action-row portal-action-row--notice">
+        <span>${icon('alertCircle', 20)} ${onlineCheckIn ? 'You are not currently checked in.' : 'Online check-in is not currently enabled.'}</span>
+      </div>
+      <button class="portal-action-row" type="button" onclick="alert('Barcode check-in will appear when enabled by the tournament.')">
+        <span>${icon('dashboard', 20)} Show barcode for check-in</span>
+        ${icon('chevronRight', 18)}
+      </button>
+      <button class="portal-action-row" type="button" onclick="document.getElementById('portal-feedback-card')?.scrollIntoView({ behavior: 'smooth' })">
+        <span>${icon('pen', 20)} Submit Feedback</span>
+        ${icon('chevronRight', 18)}
+      </button>
+      ${openBallots.map(pairing => `
+        <button class="portal-action-row" type="button" onclick="window.tcPortalEnterBallot('${escapeJsString(pairing.id)}')">
+          <span>${icon('clipboardCheck', 20)} Submit Ballot - ${escapeHtml(pairing.rounds?.name || 'Round')} ${escapeHtml(pairing.room_label || '')}</span>
+          ${icon('chevronRight', 18)}
+        </button>
+      `).join('')}
+    </section>
+  `;
+}
+
+function renderInThisRoundPanel(role, profile, pairings, teamMap) {
+  const releasedPairing = pairings
+    .filter(pairing => pairing.rounds?.status === 'Released')
+    .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
+
+  if (!releasedPairing) {
+    return `
+      <section class="portal-panel">
+        <h2>In This Round</h2>
+        <div class="portal-panel-body">
+          <em>${role === 'judge' ? 'You are not assigned to a debate this round.' : 'You do not have a debate this round.'}</em>
+        </div>
+      </section>
+    `;
+  }
+
+  const position = role === 'judge' ? 'Chair' : positionForTeam(releasedPairing, profile.id);
+
+  return `
+    <section class="portal-panel">
+      <h2>In This Round</h2>
+      <div class="portal-panel-body">
+        <div class="portal-round-line"><strong>${escapeHtml(releasedPairing.rounds?.name || 'Round')}</strong> <span>${escapeHtml(position)}</span></div>
+        <div style="margin-top:8px;"><strong>Venue:</strong> ${escapeHtml(releasedPairing.room_label || 'TBD')}</div>
+        <div class="portal-team-grid">
+          ${['OG', 'OO', 'CG', 'CO'].map(pos => {
+            const teamId = releasedPairing[`${pos.toLowerCase()}_team_id`];
+            const active = teamId === profile.id;
+            return `<div class="${active ? 'active' : ''}"><strong>${pos}</strong><br>${teamName(teamMap, teamId)}</div>`;
+          }).join('')}
+        </div>
+        ${releasedPairing.jitsi_link ? `<a class="portal-link-button" href="${escapeHtml(releasedPairing.jitsi_link)}" target="_blank" rel="noopener">${icon('mic', 16)} Join room</a>` : ''}
+      </div>
+    </section>
+  `;
+}
+
+function renderRegistrationPanel(role, profile, personName) {
+  if (role === 'judge') {
+    return `
+      <section class="portal-panel">
+        <h2>Registration (${escapeHtml(personName)})</h2>
+        <div class="portal-panel-body portal-registration-rows">
+          <div><strong>Name:</strong> ${escapeHtml(profile.name || 'Not provided')}</div>
+          <div><strong>Email:</strong> ${escapeHtml(profile.email || 'Not provided')}</div>
+          <div><strong>Role:</strong> Adjudicator${profile.is_trainee ? ' / Trainee' : ''}</div>
+          <div class="portal-muted-band"><strong>Institution:</strong> ${escapeHtml(profile.institution || 'Independent')}</div>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="portal-panel">
+      <h2>Registration (${escapeHtml(personName)})</h2>
+      <div class="portal-panel-body portal-registration-rows">
+        <div><strong>Team name:</strong> ${escapeHtml(profile.name || 'Not provided')}</div>
+        ${profile.emoji ? `<div><strong>Emoji:</strong> ${escapeHtml(profile.emoji)}</div>` : ''}
+        <div><strong>Speakers:</strong> ${escapeHtml(getTeamSpeakers(profile))}</div>
+        <div>
+          <strong>Eligible for break categories:</strong> ${escapeHtml(getBreakCategory(profile))}<br>
+          <strong>Speaker categories:</strong> ${escapeHtml(getSpeakerCategory(profile, personName))}
+        </div>
+        <div class="portal-muted-band"><strong>Institution:</strong> ${escapeHtml(profile.institution || 'Unaffiliated')}</div>
+      </div>
+    </section>
+  `;
+}
+
+function renderMotionsPanel(rounds) {
+  const releasedMotions = rounds
+    .filter(round => round.motion_released_at && round.motion_text)
+    .sort((a, b) => (b.round_num || 0) - (a.round_num || 0));
+
+  return `
+    <section class="portal-panel">
+      <h2>Motions</h2>
+      <div class="portal-panel-body">
+        ${releasedMotions.length === 0 ? `
+          <em>No motions have been released yet.</em>
+        ` : releasedMotions.map(round => `
+          <div style="border-bottom:1px solid #e5e7eb; padding:10px 0;">
+            <strong>Round ${escapeHtml(round.round_num || '')}:</strong> ${escapeHtml(round.motion_text)}
+            ${round.motion_info ? `<div style="color:#64748b; margin-top:4px;">${escapeHtml(round.motion_info)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
 export async function renderPrivatePortal(container, role, id) {
   const safeRole = role === 'judge' ? 'judge' : 'team';
   const { data: profile, error } = await fetchProfile(safeRole, id);
@@ -268,6 +460,7 @@ export async function renderPrivatePortal(container, role, id) {
   const teamMap = new Map((teams || []).map(team => [team.id, team]));
   const pairings = await fetchPairings(safeRole, profile.id, tournamentId);
   const blocked = false;
+  const personName = getPersonalName(safeRole, profile);
 
   window.tcPortalEnterBallot = (pairingId) => {
     const pairing = pairings.find(item => item.id === pairingId);
@@ -297,26 +490,73 @@ export async function renderPrivatePortal(container, role, id) {
 
   container.className = '';
   container.innerHTML = `
-    <div style="min-height:100vh; background:#f8fafc; color:#0f172a; font-family:Inter, sans-serif;">
+    <div style="min-height:100vh; background:#f3f6f9; color:#111827; font-family:Inter, Arial, sans-serif;">
       <style>
-        .portal-card { background:white; border:1px solid #e2e8f0; border-radius:16px; padding:20px; margin-bottom:16px; }
-        .portal-card__heading { display:flex; align-items:center; gap:8px; color:#0f172a; font-weight:900; font-size:17px; }
+        .portal-nav { height:56px; display:flex; align-items:center; gap:24px; padding:0 22px; background:#fff; border-bottom:1px solid #dde2e8; position:sticky; top:0; z-index:5; }
+        .portal-brand { display:flex; align-items:center; gap:8px; font-size:21px; color:#111827; white-space:nowrap; }
+        .portal-brand-mark { width:38px; height:38px; border-radius:50%; background:#6f42c1; color:white; display:flex; align-items:center; justify-content:center; }
+        .portal-links { display:flex; align-items:center; gap:20px; color:#68707c; font-size:19px; flex:1; overflow:hidden; white-space:nowrap; }
+        .portal-login { color:#7b635d; font-size:19px; }
+        .portal-page { padding:22px 20px 48px; }
+        .portal-title { font-size:40px; line-height:1.15; margin:0 0 20px; font-weight:800; color:#0b1118; }
+        .portal-title span { color:#7d8a99; font-weight:500; }
+        .portal-warning { display:flex; gap:18px; align-items:flex-start; color:#ff4b14; border:1px solid #ff4b14; background:#fff; border-radius:5px; padding:16px 24px; font-size:20px; line-height:1.35; margin-bottom:20px; }
+        .portal-action-list { background:#fff; border:1px solid #d9dde3; border-radius:5px; overflow:hidden; margin-bottom:20px; }
+        .portal-action-row { min-height:58px; width:100%; border:0; border-bottom:1px solid #d9dde3; background:#fff; color:#673ab7; display:flex; align-items:center; justify-content:space-between; padding:0 28px; font-size:20px; cursor:pointer; text-align:left; }
+        .portal-action-row span { display:flex; align-items:center; gap:16px; }
+        .portal-action-row:last-child { border-bottom:0; }
+        .portal-action-row--notice { color:#ff4b14; cursor:default; justify-content:flex-start; }
+        .portal-grid { display:grid; grid-template-columns:1fr 1fr; gap:36px; align-items:start; }
+        .portal-panel { background:#fff; border:1px solid #d9dde3; border-radius:5px; overflow:hidden; margin-bottom:28px; }
+        .portal-panel h2 { margin:0; padding:14px 26px; font-size:30px; line-height:1.25; color:#0b1118; border-bottom:1px solid #d9dde3; }
+        .portal-panel-body { padding:18px 26px; font-size:22px; line-height:1.32; min-height:54px; }
+        .portal-registration-rows { padding:0; }
+        .portal-registration-rows > div { padding:14px 26px; border-bottom:1px solid #d9dde3; }
+        .portal-registration-rows > div:last-child { border-bottom:0; }
+        .portal-muted-band { background:#d7dbe0; color:#8290a0; }
+        .portal-round-line { display:flex; justify-content:space-between; gap:16px; }
+        .portal-team-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-top:14px; font-size:14px; }
+        .portal-team-grid div { border:1px solid #d9dde3; border-radius:4px; padding:8px; background:#fff; }
+        .portal-team-grid div.active { border-color:#673ab7; background:#f5f0ff; }
+        .portal-link-button { border:0; background:#673ab7; color:white; border-radius:4px; padding:9px 14px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; text-decoration:none; font-size:14px; margin-top:14px; }
+        .portal-input { width:100%; border:1px solid #cbd5e1; border-radius:4px; padding:10px 12px; font-size:16px; font-family:inherit; box-sizing:border-box; }
+        .portal-card { background:white; border:1px solid #d9dde3; border-radius:5px; padding:20px; margin-bottom:16px; }
+        .portal-card__heading { display:flex; align-items:center; gap:8px; color:#111827; font-weight:800; font-size:18px; }
         .portal-muted { color:#64748b; line-height:1.6; margin:12px 0 0; }
-        .portal-button { border:0; background:#0044b3; color:white; border-radius:8px; padding:10px 14px; font-weight:800; cursor:pointer; display:inline-flex; align-items:center; gap:8px; text-decoration:none; font-size:13px; }
-        .portal-input { width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; font-size:14px; font-family:inherit; box-sizing:border-box; }
+        .portal-button { border:0; background:#673ab7; color:white; border-radius:4px; padding:10px 14px; font-weight:800; cursor:pointer; display:inline-flex; align-items:center; gap:8px; text-decoration:none; font-size:13px; }
+        .portal-search-row { display:flex; gap:10px; margin-top:2px; }
+        .portal-search-row input { flex:1; border:1px solid #cbd5e1; border-radius:4px; padding:13px 26px; font-size:20px; }
+        .portal-search-row button { width:52px; border:1px solid #cbd5e1; background:#e5e9ee; border-radius:4px; color:#374151; }
+        @media (max-width: 900px) {
+          .portal-links { display:none; }
+          .portal-grid { grid-template-columns:1fr; gap:16px; }
+          .portal-title { font-size:30px; }
+          .portal-warning, .portal-action-row, .portal-panel-body { font-size:16px; }
+          .portal-panel h2 { font-size:24px; }
+          .portal-team-grid { grid-template-columns:1fr 1fr; }
+        }
       </style>
-      <main style="max-width:980px; margin:0 auto; padding:28px 20px 48px;">
-        ${renderProfileCard(safeRole, profile, tournament)}
-        <div style="display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:16px; align-items:start;">
+      ${renderPortalNav(tournament)}
+      <main class="portal-page">
+        <h1 class="portal-title">Private URL <span>for ${escapeHtml(personName)}${safeRole === 'team' ? ` (${escapeHtml(profile.name || 'Team')})` : ''}</span></h1>
+        ${renderWarning(personName)}
+        ${renderActionRows(safeRole, tournament, pairings)}
+        <div class="portal-grid">
           <div>
-            ${renderDrawCard(safeRole, profile, pairings, teamMap)}
-            ${renderMotionsCard(rounds || [])}
+            ${renderInThisRoundPanel(safeRole, profile, pairings, teamMap)}
+            ${renderMotionsPanel(rounds || [])}
+            ${renderFeedbackCard(safeRole, profile, pairings, blocked)}
           </div>
           <div>
-            ${renderFeedbackCard(safeRole, profile, pairings, blocked)}
+            ${renderRegistrationPanel(safeRole, profile, personName)}
             ${renderBallotCard(safeRole, pairings)}
             ${renderCheckInCard(tournament)}
           </div>
+        </div>
+        <div class="portal-search-row">
+          <input type="text" placeholder="Find in Table" aria-label="Find in Table">
+          <button type="button">${icon('search', 22)}</button>
+          <button type="button">${icon('clipboard', 22)}</button>
         </div>
       </main>
     </div>

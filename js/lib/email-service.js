@@ -1,6 +1,6 @@
 import { supabase } from './supabase.js';
 
-export async function sendRegistrationApprovedEmail({ to, name, role, tournamentId, tournamentName, idempotencyKey }) {
+export async function sendRegistrationApprovedEmail({ to, name, role, tournamentId, tournamentName, dashboardUrl, idempotencyKey }) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('You must be signed in to send email.');
 
@@ -17,7 +17,7 @@ export async function sendRegistrationApprovedEmail({ to, name, role, tournament
       role,
       tournamentId,
       tournamentName,
-      dashboardUrl: `${window.location.origin}/#/dashboard`,
+      dashboardUrl: dashboardUrl || `${window.location.origin}/#/dashboard`,
       idempotencyKey
     })
   });

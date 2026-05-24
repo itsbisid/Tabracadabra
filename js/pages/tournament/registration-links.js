@@ -132,9 +132,11 @@ export async function renderRegistrationLinks(container) {
       rosterData.speaker2_email = sub.data.speaker2_email;
     }
 
-    const { error: rosterErr } = await supabase
+    const { data: insertedRoster, error: rosterErr } = await supabase
       .from(rosterTable)
-      .insert([rosterData]);
+      .insert([rosterData])
+      .select('id')
+      .single();
 
     if (rosterErr) {
       alert(`Accepted but failed to add to ${rosterTable}: ` + rosterErr.message);
@@ -143,10 +145,30 @@ export async function renderRegistrationLinks(container) {
       await supabase.from('registration_submissions').update({ status: 'accepted' }).eq('id', id);
       
       // 4. Send the registration approval email through the server-side Resend endpoint.
-      const name = sub.role === 'adjudicator' ? sub.data.full_name : sub.data.team_name;
-      const recipients = sub.role === 'adjudicator'
-        ? [sub.data.email]
-        : [sub.data.speaker1_email, sub.data.speaker2_email].filter(Boolean);
+      const teamPortalUrl = `${window.location.origin}/#/portal/team/${insertedRoster.id}`;
+      const judgePortalUrl = `${window.location.origin}/#/portal/judge/${insertedRoster.id}`;
+      const emails = sub.role === 'adjudicator'
+        ? [{
+            to: sub.data.email,
+            name: sub.data.full_name,
+            role: 'adjudicator',
+            dashboardUrl: judgePortalUrl
+          }]
+        : [
+            {
+              to: sub.data.speaker1_email,
+              name: sub.data.speaker1_name || sub.data.team_name,
+              role: 'team speaker',
+              dashboardUrl: `${teamPortalUrl}?speaker=${encodeURIComponent(sub.data.speaker1_name || '')}`
+            },
+            {
+              to: sub.data.speaker2_email,
+              name: sub.data.speaker2_name || sub.data.team_name,
+              role: 'team speaker',
+              dashboardUrl: `${teamPortalUrl}?speaker=${encodeURIComponent(sub.data.speaker2_name || '')}`
+            }
+          ].filter(email => email.to);
+      const recipients = emails.map(email => email.to);
       const { data: tournament } = await supabase
         .from('tournaments')
         .select('name, short_name')
@@ -155,21 +177,22 @@ export async function renderRegistrationLinks(container) {
 
       let emailResult = { sent: false, message: '' };
       try {
-        await sendRegistrationApprovedEmail({
-          to: recipients,
-          name,
-          role: sub.role,
+        if (emails.length === 0) throw new Error('No recipient email was provided on the accepted registration.');
+
+        await Promise.all(emails.map((email, index) => sendRegistrationApprovedEmail({
+          ...email,
           tournamentId: sub.tournament_id,
           tournamentName: tournament?.short_name || tournament?.name || 'your tournament',
-          idempotencyKey: `registration-approved-${id}`
-        });
+          idempotencyKey: `registration-approved-${id}-${index}`
+        })));
         emailResult = { sent: true, message: `Approval email sent to ${recipients.join(', ')}.` };
       } catch (emailError) {
         emailResult = { sent: false, message: emailError.message };
       }
 
-      const safeName = escapeHtml(name);
-      const safeNameJs = escapeJsString(name);
+      const displayName = sub.role === 'adjudicator' ? sub.data.full_name : sub.data.team_name;
+      const safeName = escapeHtml(displayName);
+      const safeNameJs = escapeJsString(displayName);
       const safeRole = escapeHtml(sub.role);
       const safeEmailMessage = escapeHtml(emailResult.message);
 
@@ -195,7 +218,7 @@ export async function renderRegistrationLinks(container) {
                  <div style="font-weight:700; color:var(--color-text); margin-bottom:12px;">Subject: Registration Approved!</div>
                  Hi ${safeName},<br><br>
                  Your registration as a ${safeRole} has been approved! You can now access your tournament dashboard for draws, check-ins, and announcements.<br><br>
-                 Access your portal: <strong>${window.location.origin}/#/dashboard</strong>
+                 Access your portal: <strong>${escapeHtml(sub.role === 'adjudicator' ? judgePortalUrl : teamPortalUrl)}</strong>
                </div>
                <div style="margin-top:24px; display:flex; gap:12px;">
                  <button onclick="navigator.clipboard.writeText('Hi ${safeNameJs}, your registration has been approved...').then(() => alert('Copied!'))" class="btn btn--primary" style="flex:1;">Copy Content</button>
