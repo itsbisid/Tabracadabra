@@ -1,5 +1,23 @@
 import { supabase } from './supabase.js';
 
+function isMissingSchemaObject(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('schema cache') || message.includes('could not find');
+}
+
+async function fetchAllTournamentRows() {
+  const ordered = await supabase
+    .from('tournaments')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!ordered.error) return ordered;
+
+  return supabase
+    .from('tournaments')
+    .select('*');
+}
+
 async function fetchMembershipRows(userId) {
   const primary = await supabase
     .from('tournament_memberships')
@@ -22,6 +40,14 @@ export async function fetchUserTournaments(userId) {
     .order('created_at', { ascending: false });
 
   const { data: memberships, error: membershipError } = await fetchMembershipRows(userId);
+  if (isMissingSchemaObject(ownedError) && isMissingSchemaObject(membershipError)) {
+    const { data, error } = await fetchAllTournamentRows();
+    return {
+      data: (data || []).map((tournament) => ({ ...tournament, userRole: 'Director' })),
+      error
+    };
+  }
+
   const byId = new Map();
   const ownedRows = Array.isArray(owned) ? owned : [];
   const membershipRows = Array.isArray(memberships) ? memberships : [];

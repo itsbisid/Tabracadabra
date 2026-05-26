@@ -4,24 +4,13 @@ import { supabase } from '../lib/supabase.js';
 import { setActiveTournamentId } from '../lib/tournament-context.js';
 
 async function createTournamentRecord(tournament) {
-  const retryableSchemaError = (error) => {
-    const message = String(error?.message || '').toLowerCase();
-    return message.includes('schema cache') || message.includes('column') || message.includes('could not find');
-  };
-
-  const buildPayload = (excludedKeys = []) => Object.fromEntries(
-    Object.entries(tournament).filter(([key, value]) => !excludedKeys.includes(key) && value !== undefined)
+  const payload = Object.fromEntries(
+    Object.entries(tournament).filter(([, value]) => value !== undefined)
   );
-
-  const payloads = [
-    buildPayload(),
-    buildPayload(['default_prep_time']),
-    buildPayload(['default_prep_time', 'timezone']),
-    buildPayload(['default_prep_time', 'timezone', 'status'])
-  ];
+  const maxAttempts = Object.keys(payload).length + 1;
 
   let lastError = null;
-  for (const payload of payloads) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const { data, error } = await supabase
       .from('tournaments')
       .insert(payload)
@@ -31,7 +20,10 @@ async function createTournamentRecord(tournament) {
     if (!error) return { data, error: null };
 
     lastError = error;
-    if (!retryableSchemaError(error)) break;
+    const missingColumn = String(error.message || '').match(/Could not find the '([^']+)' column/);
+    if (!missingColumn?.[1] || !(missingColumn[1] in payload)) break;
+
+    delete payload[missingColumn[1]];
   }
 
   return { data: null, error: lastError };

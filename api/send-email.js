@@ -193,16 +193,32 @@ async function canAdministerTournament({ token, user }, tournamentId) {
     Accept: 'application/json'
   };
 
+  const isMissingSchemaObject = (body) => {
+    const message = String(body?.message || '').toLowerCase();
+    return message.includes('schema cache') || message.includes('could not find');
+  };
+
   const tournamentUrl = `${supabaseUrl}/rest/v1/tournaments?id=eq.${encodeURIComponent(tournamentId)}&select=owner_id`;
   const tournamentResponse = await fetch(tournamentUrl, { headers });
-  const tournaments = tournamentResponse.ok ? await tournamentResponse.json() : [];
+  const tournamentBody = await tournamentResponse.json().catch(() => null);
+  const tournaments = tournamentResponse.ok ? tournamentBody : [];
   if (tournaments.some(tournament => tournament.owner_id === user.id)) return true;
 
   const membershipUrl = `${supabaseUrl}/rest/v1/tournament_memberships?tournament_id=eq.${encodeURIComponent(tournamentId)}&user_id=eq.${encodeURIComponent(user.id)}&select=role`;
   const membershipResponse = await fetch(membershipUrl, { headers });
-  const memberships = membershipResponse.ok ? await membershipResponse.json() : [];
+  const membershipBody = await membershipResponse.json().catch(() => null);
+  const memberships = membershipResponse.ok ? membershipBody : [];
 
-  return memberships.some(membership => ADMIN_ROLES.has(membership.role));
+  if (memberships.some(membership => ADMIN_ROLES.has(membership.role))) return true;
+
+  if (isMissingSchemaObject(tournamentBody) && isMissingSchemaObject(membershipBody)) {
+    const fallbackUrl = `${supabaseUrl}/rest/v1/tournaments?id=eq.${encodeURIComponent(tournamentId)}&select=id`;
+    const fallbackResponse = await fetch(fallbackUrl, { headers });
+    const fallbackTournaments = fallbackResponse.ok ? await fallbackResponse.json() : [];
+    return fallbackTournaments.some(tournament => tournament.id === tournamentId);
+  }
+
+  return false;
 }
 
 export default async function handler(request, response) {
