@@ -3,6 +3,40 @@ import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
 import { setActiveTournamentId } from '../lib/tournament-context.js';
 
+async function createTournamentRecord(tournament) {
+  const retryableSchemaError = (error) => {
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('schema cache') || message.includes('column') || message.includes('could not find');
+  };
+
+  const buildPayload = (excludedKeys = []) => Object.fromEntries(
+    Object.entries(tournament).filter(([key, value]) => !excludedKeys.includes(key) && value !== undefined)
+  );
+
+  const payloads = [
+    buildPayload(),
+    buildPayload(['default_prep_time']),
+    buildPayload(['default_prep_time', 'timezone']),
+    buildPayload(['default_prep_time', 'timezone', 'status'])
+  ];
+
+  let lastError = null;
+  for (const payload of payloads) {
+    const { data, error } = await supabase
+      .from('tournaments')
+      .insert(payload)
+      .select('id')
+      .single();
+
+    if (!error) return { data, error: null };
+
+    lastError = error;
+    if (!retryableSchemaError(error)) break;
+  }
+
+  return { data: null, error: lastError };
+}
+
 export async function renderCreateTournament(container) {
   const content = `
     <div style="max-width: 900px; margin: 0 auto;">
@@ -418,17 +452,18 @@ export async function renderCreateTournament(container) {
       return;
     }
 
-    // Call the RPC for atomic transaction: Create Tournament + Tab Director Membership
-    const { data, error } = await supabase.rpc('create_tournament_atomic', {
-      t_name: newTournament.name,
-      t_short_name: newTournament.short_name,
-      t_description: newTournament.description,
-      t_start_date: newTournament.start_date,
-      t_end_date: newTournament.end_date,
-      t_location: newTournament.location,
-      t_settings: newTournament.settings,
-      t_default_prep_time: 15, // Default 15 mins
-      t_owner_id: session.user.id
+    const { data, error } = await createTournamentRecord({
+      name: newTournament.name,
+      short_name: newTournament.short_name,
+      description: newTournament.description,
+      start_date: newTournament.start_date,
+      end_date: newTournament.end_date,
+      timezone: newTournament.timezone,
+      location: newTournament.location,
+      settings: newTournament.settings,
+      default_prep_time: 15,
+      owner_id: session.user.id,
+      status: 'draft'
     });
 
     if (error) {
@@ -436,7 +471,7 @@ export async function renderCreateTournament(container) {
       btn.disabled = false;
       btn.innerHTML = originalText;
     } else {
-      setActiveTournamentId(data);
+      setActiveTournamentId(data?.id);
       window.tcNavigate('/tournament/dashboard');
     }
   };
