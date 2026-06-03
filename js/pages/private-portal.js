@@ -3,6 +3,7 @@ import { showBallotModal } from '../components/ballot-modal.js';
 import { supabase } from '../lib/supabase.js';
 import { escapeHtml, escapeJsString } from '../lib/html.js';
 import { getPortalPushStatus, subscribeToPortalPush } from '../lib/push-service.js';
+import QRCode from 'qrcode';
 
 function getRoleLabel(role) {
   return role === 'judge' ? 'Adjudicator' : 'Team';
@@ -46,25 +47,244 @@ async function fetchProfile(role, id) {
 }
 
 async function fetchPairings(role, id, tournamentId) {
-  const filters = role === 'judge'
-    ? `chair_id.eq.${id}`
-    : `og_team_id.eq.${id},oo_team_id.eq.${id},cg_team_id.eq.${id},co_team_id.eq.${id}`;
+  const select = '*, rounds!inner(*), ballots(*)';
+  const byTeams = `og_team_id.eq.${id},oo_team_id.eq.${id},cg_team_id.eq.${id},co_team_id.eq.${id}`;
+  let pairings = [];
 
-  const withBallots = await supabase
-    .from('draw_pairings')
-    .select('*, rounds!inner(*), ballots(*)')
-    .eq('tournament_id', tournamentId)
-    .or(filters);
+  if (role === 'judge') {
+    const [{ data: chairPairings }, { data: allocations }] = await Promise.all([
+      supabase
+        .from('draw_pairings')
+        .select(select)
+        .eq('tournament_id', tournamentId)
+        .eq('chair_id', id),
+      supabase
+        .from('adjudicator_allocations')
+        .select('pairing_id, role')
+        .eq('adjudicator_id', id)
+    ]);
 
-  if (!withBallots.error) return withBallots.data || [];
+    const allocationPairingIds = [...new Set((allocations || []).map(allocation => allocation.pairing_id).filter(Boolean))];
+    let allocationPairings = [];
+    if (allocationPairingIds.length > 0) {
+      const { data } = await supabase
+        .from('draw_pairings')
+        .select(select)
+        .eq('tournament_id', tournamentId)
+        .in('id', allocationPairingIds);
+      allocationPairings = data || [];
+    }
 
-  const fallback = await supabase
-    .from('draw_pairings')
-    .select('*, rounds!inner(*)')
-    .eq('tournament_id', tournamentId)
-    .or(filters);
+    const map = new Map([...(chairPairings || []), ...allocationPairings].map(pairing => [pairing.id, pairing]));
+    pairings = [...map.values()];
+  } else {
+    const { data } = await supabase
+      .from('draw_pairings')
+      .select(select)
+      .eq('tournament_id', tournamentId)
+      .or(byTeams);
+    pairings = data || [];
+  }
 
-  return fallback.data || [];
+  return hydratePairings(pairings, id);
+}
+
+async function hydratePairings(pairings, viewerId) {
+  const pairingIds = pairings.map(pairing => pairing.id).filter(Boolean);
+  if (pairingIds.length === 0) return [];
+
+  const [{ data: allocations }, { data: feedback }] = await Promise.all([
+    supabase.from('adjudicator_allocations').select('*').in('pairing_id', pairingIds),
+    supabase.from('judge_feedback').select('*').in('pairing_id', pairingIds).eq('submitted_by_id', viewerId)
+  ]);
+
+  const judgeIds = [
+    ...pairings.map(pairing => pairing.chair_id),
+    ...(allocations || []).map(allocation => allocation.adjudicator_id)
+  ].filter(Boolean);
+  const uniqueJudgeIds = [...new Set(judgeIds)];
+  const { data: judges } = uniqueJudgeIds.length > 0
+    ? await supabase.from('adjudicators').select('id,name,institution,is_trainee').in('id', uniqueJudgeIds)
+    : { data: [] };
+
+  const judgeMap = new Map((judges || []).map(judge => [judge.id, judge]));
+
+  return pairings.map(pairing => ({
+    ...pairing,
+    adjudicator_allocations: (allocations || []).filter(allocation => allocation.pairing_id === pairing.id),
+    submitted_feedback: (feedback || []).filter(item => item.pairing_id === pairing.id),
+    judgeMap
+  }));
+}
+
+async function fetchPortalSession({ role, id, tournamentId }) {
+  try {
+    const response = await fetch('/api/portal-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, id, tournamentId })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not create portal token.');
+    return data;
+  } catch (error) {
+    if (!isLocalhost()) throw error;
+    const token = `local:${role}:${id}:${tournamentId}`;
+    const { data } = await supabase
+      .from('portal_check_ins')
+      .select('checked_in_at')
+      .eq('tournament_id', tournamentId)
+      .eq('participant_role', role)
+      .eq('participant_id', id)
+      .maybeSingle();
+    return {
+      ok: true,
+      token,
+      checkIn: data ? { checkedIn: true, checkedInAt: data.checked_in_at } : { checkedIn: false }
+    };
+  }
+}
+
+async function postPortalAction(path, payload) {
+  try {
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Action could not be completed.');
+    return data;
+  } catch (error) {
+    if (!isLocalhost() || !String(payload.token || '').startsWith('local:')) throw error;
+    return postLocalPortalAction(path, payload);
+  }
+}
+
+function isLocalhost() {
+  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+}
+
+function parseLocalToken(token) {
+  const [, role, id, tournamentId] = String(token || '').split(':');
+  return { role, id, tournamentId };
+}
+
+async function postLocalPortalAction(path, payload) {
+  const tokenData = parseLocalToken(payload.token);
+  if (!tokenData.id || !tokenData.tournamentId) throw new Error('Local portal token is invalid.');
+
+  if (path === '/api/portal-check-in') {
+    const { error } = await supabase.from('portal_check_ins').upsert({
+      tournament_id: tokenData.tournamentId,
+      participant_role: tokenData.role,
+      participant_id: tokenData.id,
+      token_hash: payload.token,
+      checked_in_at: new Date().toISOString(),
+      user_agent: navigator.userAgent
+    }, { onConflict: 'tournament_id,participant_role,participant_id' });
+    if (error) throw error;
+    return { ok: true };
+  }
+
+  if (path === '/api/portal-ballot') {
+    const ballots = payload.ballots.map(row => ({
+      tournament_id: tokenData.tournamentId,
+      pairing_id: payload.pairingId,
+      team_id: row.team_id,
+      rank: row.rank,
+      points: row.points,
+      s1_points: row.s1_points,
+      s2_points: row.s2_points,
+      speaker_points: row.speaker_points,
+      status: 'LOCKED',
+      submitted_by_id: tokenData.id,
+      submitted_at: new Date().toISOString()
+    }));
+    const { error } = await supabase.from('ballots').upsert(ballots, { onConflict: 'pairing_id,team_id' });
+    if (error) throw error;
+    return { ok: true };
+  }
+
+  if (path === '/api/portal-feedback') {
+    const { error } = await supabase.from('judge_feedback').insert({
+      tournament_id: tokenData.tournamentId,
+      pairing_id: payload.pairingId,
+      submitted_by_id: tokenData.id,
+      submitted_role: tokenData.role === 'judge' ? 'JUDGE' : 'TEAM',
+      target_judge_id: payload.targetId,
+      score: payload.score,
+      comments: payload.comments || null
+    });
+    if (error) throw error;
+    return { ok: true };
+  }
+
+  throw new Error('Unsupported local portal action.');
+}
+
+function judgePositionForPairing(pairing, judgeId) {
+  if (pairing.chair_id === judgeId) return 'Chair';
+  const allocation = (pairing.adjudicator_allocations || []).find(item => item.adjudicator_id === judgeId);
+  if (!allocation) return 'Panel';
+  return allocation.role === 'TRAINEE' ? 'Trainee' : 'Wing';
+}
+
+function getJudgeName(pairing, judgeId) {
+  return pairing.judgeMap?.get(judgeId)?.name || judgeId || 'TBD';
+}
+
+function getFeedbackTargetsForPairing(pairing, role, profile) {
+  if (!pairing?.chair_id) return [];
+
+  if (role === 'team') {
+    return [{ id: pairing.chair_id, label: `Chair: ${getJudgeName(pairing, pairing.chair_id)}` }];
+  }
+
+  const position = judgePositionForPairing(pairing, profile.id);
+  if (position === 'Chair') {
+    return (pairing.adjudicator_allocations || [])
+      .filter(allocation => ['WING', 'TRAINEE'].includes(allocation.role) && allocation.adjudicator_id !== profile.id)
+      .map(allocation => ({
+        id: allocation.adjudicator_id,
+        label: `${allocation.role === 'TRAINEE' ? 'Trainee' : 'Wing'}: ${getJudgeName(pairing, allocation.adjudicator_id)}`
+      }));
+  }
+
+  return [{ id: pairing.chair_id, label: `Chair: ${getJudgeName(pairing, pairing.chair_id)}` }];
+}
+
+function getLatestCompletedPairing(pairings) {
+  return pairings
+    .filter(pairing => Array.isArray(pairing.ballots) && pairing.ballots.length > 0)
+    .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0] || null;
+}
+
+function getFeedbackBlockInfo(pairings, role, profile, tournament) {
+  if (tournament?.bypass_feedback_lock) return { blocked: false, pairing: null, missingTargets: [] };
+
+  const pairing = getLatestCompletedPairing(pairings);
+  if (!pairing) return { blocked: false, pairing: null, missingTargets: [] };
+
+  const submittedTargetIds = new Set((pairing.submitted_feedback || []).map(item => item.target_judge_id));
+  const missingTargets = getFeedbackTargetsForPairing(pairing, role, profile)
+    .filter(target => !submittedTargetIds.has(target.id));
+
+  return { blocked: missingTargets.length > 0, pairing, missingTargets };
+}
+
+function getPrepCountdown(round) {
+  if (!round?.motion_released_at || !round?.prep_time_override) return '';
+  const releaseTime = new Date(round.motion_released_at).getTime();
+  const endTime = releaseTime + Number(round.prep_time_override) * 60 * 1000;
+  const remaining = endTime - Date.now();
+
+  if (Number.isNaN(endTime)) return '';
+  if (remaining <= 0) return 'Prep time over';
+
+  const minutes = Math.floor(remaining / 60000);
+  const seconds = Math.floor((remaining % 60000) / 1000);
+  return `${minutes}:${String(seconds).padStart(2, '0')} prep remaining`;
 }
 
 function renderProfileCard(role, profile, tournament) {
@@ -170,7 +390,7 @@ function renderMotionsCard(rounds) {
   `;
 }
 
-function renderBallotCard(role, pairings) {
+function renderBallotCard(role, profile, pairings, blockInfo) {
   if (role !== 'judge') {
     return `
       <section class="portal-card">
@@ -180,10 +400,10 @@ function renderBallotCard(role, pairings) {
     `;
   }
 
-  const openBallots = pairings.filter(pairing => {
+  const openBallots = blockInfo?.blocked ? [] : pairings.filter(pairing => {
     const isReleased = pairing.rounds?.status === 'Released';
     const hasBallot = Array.isArray(pairing.ballots) && pairing.ballots.length > 0;
-    return isReleased && !hasBallot;
+    return isReleased && !hasBallot && judgePositionForPairing(pairing, profile.id) === 'Chair';
   });
 
   return `
@@ -204,42 +424,47 @@ function renderBallotCard(role, pairings) {
   `;
 }
 
-function renderFeedbackCard(role, profile, pairings, blocked) {
-  const latest = pairings
-    .filter(pairing => Array.isArray(pairing.ballots) && pairing.ballots.length > 0 && pairing.chair_id)
-    .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
+function renderFeedbackCard(role, profile, blockInfo) {
+  const latest = blockInfo.pairing || null;
+  const targets = latest ? getFeedbackTargetsForPairing(latest, role, profile) : [];
+  const submittedTargetIds = new Set((latest?.submitted_feedback || []).map(item => item.target_judge_id));
+  const missingTargets = targets.filter(target => !submittedTargetIds.has(target.id));
 
   return `
     <section id="portal-feedback-card" class="portal-card">
       <div class="portal-card__heading">${icon('messageSquare', 18)} Feedback</div>
       ${!latest ? `
         <p class="portal-muted">Feedback forms will appear here after a completed round.</p>
+      ` : missingTargets.length === 0 ? `
+        <p class="portal-muted">Feedback is complete for your latest finished room.</p>
       ` : `
-        <p class="portal-muted">${blocked ? 'Feedback is required before the next draw is unlocked.' : 'You can submit feedback for your latest completed round.'}</p>
-        <form onsubmit="window.tcPortalSubmitFeedback(event)" class="portal-form">
-          <input type="hidden" name="pairing_id" value="${escapeHtml(latest.id)}">
-          <input type="hidden" name="target_id" value="${escapeHtml(latest.chair_id)}">
-          <input type="hidden" name="submitted_by_id" value="${escapeHtml(profile.id)}">
-          <input type="hidden" name="submitted_role" value="${escapeHtml(role === 'judge' ? 'JUDGE' : 'TEAM')}">
-          <label>Score<input class="portal-input" name="score" type="number" min="1" max="10" required placeholder="1-10"></label>
-          <label>Comments<textarea class="portal-input" name="comments" rows="4" placeholder="Optional context for tab/adjudication core"></textarea></label>
-          <button class="portal-button" type="submit">${icon('send', 16)} Submit feedback</button>
-        </form>
+        <p class="portal-muted">${blockInfo.blocked ? 'Feedback is required before your next released draw is unlocked.' : 'You can submit feedback for your latest completed round.'}</p>
+        ${missingTargets.map(target => `
+          <form onsubmit="window.tcPortalSubmitFeedback(event)" class="portal-form portal-feedback-form">
+            <input type="hidden" name="pairing_id" value="${escapeHtml(latest.id)}">
+            <input type="hidden" name="target_id" value="${escapeHtml(target.id)}">
+            <div class="portal-feedback-target">${escapeHtml(target.label)}</div>
+            <label>Score<input class="portal-input" name="score" type="number" min="1" max="10" required placeholder="1-10"></label>
+            <label>Comments<textarea class="portal-input" name="comments" rows="4" placeholder="Optional context for tab/adjudication core"></textarea></label>
+            <button class="portal-button" type="submit">${icon('send', 16)} Submit feedback</button>
+          </form>
+        `).join('')}
       `}
     </section>
   `;
 }
 
-function renderCheckInCard(tournament) {
+function renderCheckInCard(tournament, checkInStatus) {
   const settings = tournament?.settings || {};
   const enabled = Boolean(settings.online_check_in || settings.onlineCheckIn || settings.check_in_enabled);
+  const checkedIn = Boolean(checkInStatus?.checkedIn);
 
   return `
     <section class="portal-card">
       <div class="portal-card__heading">${icon('checkSquare', 18)} Check-in</div>
       ${enabled ? `
-        <p class="portal-muted">Online check-in is enabled for this tournament.</p>
-        <button class="portal-button" type="button" data-portal-action="check-in">${icon('check', 16)} Check in now</button>
+        <p class="portal-muted">${checkedIn ? `Checked in at ${escapeHtml(new Date(checkInStatus.checkedInAt).toLocaleString())}.` : 'Online check-in is enabled for this tournament.'}</p>
+        <button class="portal-button" type="button" data-portal-action="check-in">${icon(checkedIn ? 'checkCircle' : 'check', 16)} ${checkedIn ? 'Refresh check-in' : 'Check in now'}</button>
       ` : `
         <p class="portal-muted">This tournament has not enabled online check-in.</p>
       `}
@@ -276,14 +501,6 @@ function getPortalUrl() {
   return window.location.href;
 }
 
-function getCheckInKey(role, id, tournamentId) {
-  return `tc-checkin:${tournamentId}:${role}:${id}`;
-}
-
-function isCheckedIn(role, id, tournamentId) {
-  return localStorage.getItem(getCheckInKey(role, id, tournamentId)) === 'yes';
-}
-
 function renderPortalNav(tournament) {
   return `
     <nav class="portal-nav">
@@ -316,14 +533,14 @@ function renderWarning(personName) {
   `;
 }
 
-function renderHero(role, profile, personName, tournament, pairings) {
+function renderHero(role, profile, personName, tournament, pairings, blockInfo) {
   const tournamentName = getTournamentName(tournament);
-  const releasedPairing = pairings
+  const releasedPairing = blockInfo?.blocked ? null : pairings
     .filter(pairing => pairing.rounds?.status === 'Released')
     .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
   const assignment = releasedPairing
     ? `${releasedPairing.rounds?.name || 'Round'} · ${releasedPairing.room_label || 'Venue TBD'}`
-    : 'No active assignment';
+    : (blockInfo?.blocked ? 'Locked until feedback is submitted' : 'No active assignment');
   const roleText = role === 'judge'
     ? `Adjudicator${profile.is_trainee ? ' / Trainee' : ''}`
     : profile.name || 'Team';
@@ -355,7 +572,7 @@ function getOpenBallots(role, pairings) {
   return pairings.filter(pairing => {
     const isReleased = pairing.rounds?.status === 'Released';
     const hasBallot = Array.isArray(pairing.ballots) && pairing.ballots.length > 0;
-    return isReleased && !hasBallot;
+    return isReleased && !hasBallot && judgePositionForPairing(pairing, id) === 'Chair';
   });
 }
 
@@ -413,10 +630,10 @@ function getNotificationCopy(status = {}) {
   };
 }
 
-function renderActionRows(role, id, tournament, pairings, notificationStatus) {
+function renderActionRows(role, id, tournament, pairings, notificationStatus, checkInStatus, blockInfo) {
   const onlineCheckIn = Boolean(tournament?.settings?.online_check_in || tournament?.settings?.onlineCheckIn || tournament?.settings?.check_in_enabled);
-  const openBallots = getOpenBallots(role, pairings);
-  const checkedIn = isCheckedIn(role, id, tournament?.id);
+  const openBallots = blockInfo?.blocked ? [] : getOpenBallots(role, pairings);
+  const checkedIn = Boolean(checkInStatus?.checkedIn);
   const notification = getNotificationCopy(notificationStatus);
   const notificationDisabled = ['denied', 'unsupported'].includes(notificationStatus?.state);
 
@@ -430,7 +647,7 @@ function renderActionRows(role, id, tournament, pairings, notificationStatus) {
       <button class="portal-action-card ${onlineCheckIn ? '' : 'is-disabled'} ${checkedIn ? 'is-success' : ''}" type="button" ${onlineCheckIn ? 'data-portal-action="check-in"' : 'disabled'}>
         <span class="portal-action-icon">${icon(checkedIn ? 'checkCircle' : 'checkSquare', 20)}</span>
         <strong>${checkedIn ? 'Checked in' : 'Check in'}</strong>
-        <small>${onlineCheckIn ? (checkedIn ? 'Your check-in has been recorded locally.' : 'Mark yourself as present for the current round.') : 'Online check-in is not enabled yet.'}</small>
+        <small>${onlineCheckIn ? (checkedIn ? 'Your check-in is stored in tournament records.' : 'Mark yourself as present for the current round.') : 'Online check-in is not enabled yet.'}</small>
       </button>
       <button class="portal-action-card" type="button" data-portal-action="barcode">
         <span class="portal-action-icon">${icon('dashboard', 20)}</span>
@@ -439,8 +656,8 @@ function renderActionRows(role, id, tournament, pairings, notificationStatus) {
       </button>
       <button class="portal-action-card" type="button" data-portal-action="scroll" data-target="portal-feedback-card">
         <span class="portal-action-icon">${icon('pen', 20)}</span>
-        <strong>Feedback</strong>
-        <small>Jump to the available feedback form.</small>
+        <strong>${blockInfo?.blocked ? 'Feedback required' : 'Feedback'}</strong>
+        <small>${blockInfo?.blocked ? 'Submit required feedback to unlock next-round access.' : 'Jump to the available feedback form.'}</small>
       </button>
       ${openBallots.map(pairing => `
         <button class="portal-action-card portal-action-card--primary" type="button" data-portal-action="ballot" data-pairing-id="${escapeHtml(pairing.id)}">
@@ -453,7 +670,24 @@ function renderActionRows(role, id, tournament, pairings, notificationStatus) {
   `;
 }
 
-function renderInThisRoundPanel(role, profile, pairings, teamMap) {
+function renderInThisRoundPanel(role, profile, pairings, teamMap, blockInfo) {
+  if (blockInfo?.blocked) {
+    return `
+      <section id="portal-round" class="portal-panel">
+        <div class="portal-panel-head">
+          <div>
+            <span>Current assignment</span>
+            <h2>Feedback required</h2>
+          </div>
+          <div class="portal-status-pill is-warning">Locked</div>
+        </div>
+        <div class="portal-panel-body">
+          <p class="portal-empty">Submit the required feedback below before viewing your next released draw.</p>
+        </div>
+      </section>
+    `;
+  }
+
   const releasedPairing = pairings
     .filter(pairing => pairing.rounds?.status === 'Released')
     .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
@@ -475,7 +709,15 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap) {
     `;
   }
 
-  const position = role === 'judge' ? 'Chair' : positionForTeam(releasedPairing, profile.id);
+  const position = role === 'judge' ? judgePositionForPairing(releasedPairing, profile.id) : positionForTeam(releasedPairing, profile.id);
+  const prepCountdown = getPrepCountdown(releasedPairing.rounds);
+  const panel = [
+    releasedPairing.chair_id ? { role: 'Chair', id: releasedPairing.chair_id } : null,
+    ...(releasedPairing.adjudicator_allocations || []).map(allocation => ({
+      role: allocation.role === 'TRAINEE' ? 'Trainee' : 'Wing',
+      id: allocation.adjudicator_id
+    }))
+  ].filter(Boolean);
 
   return `
     <section id="portal-round" class="portal-panel">
@@ -496,6 +738,12 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap) {
             <span>Venue</span>
             <strong>${escapeHtml(releasedPairing.room_label || 'TBD')}</strong>
           </div>
+          ${prepCountdown ? `
+            <div>
+              <span>Prep timer</span>
+              <strong class="portal-prep-countdown" data-prep-end="${escapeHtml(String(new Date(releasedPairing.rounds.motion_released_at).getTime() + Number(releasedPairing.rounds.prep_time_override || 0) * 60000))}">${escapeHtml(prepCountdown)}</strong>
+            </div>
+          ` : ''}
         </div>
         <div class="portal-team-grid">
           ${['OG', 'OO', 'CG', 'CO'].map(pos => {
@@ -504,6 +752,16 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap) {
             return `<div class="${active ? 'active' : ''}"><strong>${pos}</strong><br>${teamName(teamMap, teamId)}</div>`;
           }).join('')}
         </div>
+        ${panel.length > 0 ? `
+          <div class="portal-panel-list">
+            ${panel.map(member => `
+              <div class="${member.id === profile.id ? 'active' : ''}">
+                <span>${escapeHtml(member.role)}</span>
+                <strong>${escapeHtml(getJudgeName(releasedPairing, member.id))}</strong>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
         ${releasedPairing.jitsi_link ? `<a class="portal-link-button" href="${escapeHtml(releasedPairing.jitsi_link)}" target="_blank" rel="noopener">${icon('mic', 16)} Join room</a>` : ''}
       </div>
     </section>
@@ -602,8 +860,16 @@ export async function renderPrivatePortal(container, role, id) {
 
   const teamMap = new Map((teams || []).map(team => [team.id, team]));
   const pairings = await fetchPairings(safeRole, profile.id, tournamentId);
-  const blocked = false;
   const personName = getPersonalName(safeRole, profile);
+  let portalSession;
+  try {
+    portalSession = await fetchPortalSession({ role: safeRole, id: profile.id, tournamentId });
+  } catch (sessionError) {
+    container.className = '';
+    container.innerHTML = renderNotice('Private link unavailable', sessionError.message || 'This private portal could not be validated.');
+    return;
+  }
+  const blockInfo = getFeedbackBlockInfo(pairings, safeRole, profile, tournament);
   const notificationStatus = await getPortalPushStatus({
     tournamentId,
     participantRole: safeRole,
@@ -612,7 +878,15 @@ export async function renderPrivatePortal(container, role, id) {
 
   const enterBallot = (pairingId) => {
     const pairing = pairings.find(item => item.id === pairingId);
-    if (pairing) showBallotModal(pairing, () => renderPrivatePortal(container, safeRole, id));
+    if (pairing) {
+      showBallotModal(pairing, () => renderPrivatePortal(container, safeRole, id), {
+        onSubmit: (ballots) => postPortalAction('/api/portal-ballot', {
+          token: portalSession.token,
+          pairingId,
+          ballots
+        })
+      });
+    }
   };
 
   const showToast = (message) => {
@@ -653,15 +927,20 @@ export async function renderPrivatePortal(container, role, id) {
     }
   };
 
-  const checkIn = () => {
-    localStorage.setItem(getCheckInKey(safeRole, id, tournamentId), 'yes');
-    showToast('Check-in recorded.');
-    renderPrivatePortal(container, safeRole, id);
+  const checkIn = async () => {
+    try {
+      await postPortalAction('/api/portal-check-in', { token: portalSession.token });
+      showToast('Check-in recorded in tournament data.');
+      renderPrivatePortal(container, safeRole, id);
+    } catch (error) {
+      alert(error.message || 'Check-in could not be recorded.');
+    }
   };
 
-  const showBarcode = () => {
+  const showBarcode = async () => {
     const modalRoot = document.getElementById('modal-root');
-    const portalUrl = getPortalUrl();
+    const qrPayload = `${window.location.origin}/api/portal-check-in?token=${encodeURIComponent(portalSession.token)}`;
+    const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 256 });
     modalRoot.innerHTML = `
       <div class="portal-modal-backdrop">
         <div class="portal-modal">
@@ -672,10 +951,10 @@ export async function renderPrivatePortal(container, role, id) {
             </div>
             <button type="button" data-modal-close>${icon('x', 20)}</button>
           </div>
-          <div class="portal-barcode" aria-label="Private URL barcode"></div>
-          <div class="portal-modal-url">${escapeHtml(portalUrl)}</div>
+          <div class="portal-qr-wrap"><img src="${qrDataUrl}" alt="Check-in QR code"></div>
+          <div class="portal-modal-url">${escapeHtml(qrPayload)}</div>
           <div class="portal-modal-actions">
-            <button class="portal-button" type="button" data-modal-copy>${icon('copy', 16)} Copy URL</button>
+            <button class="portal-button" type="button" data-modal-copy>${icon('copy', 16)} Copy token</button>
             <button class="portal-button is-secondary" type="button" data-modal-close>Done</button>
           </div>
         </div>
@@ -684,7 +963,9 @@ export async function renderPrivatePortal(container, role, id) {
     modalRoot.querySelectorAll('[data-modal-close]').forEach(button => {
       button.addEventListener('click', () => { modalRoot.innerHTML = ''; });
     });
-    modalRoot.querySelector('[data-modal-copy]')?.addEventListener('click', copyPortalUrl);
+    modalRoot.querySelector('[data-modal-copy]')?.addEventListener('click', () => {
+      navigator.clipboard.writeText(qrPayload).then(() => showToast('Check-in token copied.'));
+    });
   };
 
   const findInPage = (event) => {
@@ -708,22 +989,19 @@ export async function renderPrivatePortal(container, role, id) {
   window.tcPortalSubmitFeedback = async (event) => {
     event.preventDefault();
     const formData = new FormData(event.target);
-    const { error: submitError } = await supabase.from('judge_feedback').insert({
-      tournament_id: tournamentId,
-      submitted_by_id: formData.get('submitted_by_id'),
-      target_judge_id: formData.get('target_id'),
-      pairing_id: formData.get('pairing_id'),
-      score: Number(formData.get('score')),
-      comments: formData.get('comments')
-    });
-
-    if (submitError) {
-      alert(submitError.message);
-      return;
+    try {
+      await postPortalAction('/api/portal-feedback', {
+        token: portalSession.token,
+        pairingId: formData.get('pairing_id'),
+        targetId: formData.get('target_id'),
+        score: Number(formData.get('score')),
+        comments: formData.get('comments')
+      });
+      showToast('Feedback submitted.');
+      renderPrivatePortal(container, safeRole, id);
+    } catch (error) {
+      alert(error.message || 'Feedback could not be submitted.');
     }
-
-    alert('Feedback submitted.');
-    renderPrivatePortal(container, safeRole, id);
   };
 
   container.className = '';
@@ -777,6 +1055,7 @@ export async function renderPrivatePortal(container, role, id) {
         .portal-status-pill { border-radius:999px; padding:7px 10px; background:#e8f7f1; color:#047857; font-size:12px; font-weight:900; white-space:nowrap; }
         .portal-status-pill.is-muted { background:#eef2f7; color:#64748b; }
         .portal-status-pill.is-success { background:#e8f7f1; color:#047857; }
+        .portal-status-pill.is-warning { background:#fff8eb; color:#8a3b00; }
         .portal-round-summary { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
         .portal-round-summary div { border:1px solid #edf1f6; background:#f8fafc; border-radius:8px; padding:12px; }
         .portal-round-summary span { display:block; color:#64748b; font-size:11px; font-weight:900; text-transform:uppercase; margin-bottom:4px; }
@@ -784,6 +1063,12 @@ export async function renderPrivatePortal(container, role, id) {
         .portal-team-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-top:12px; font-size:13px; }
         .portal-team-grid div { border:1px solid #dbe3ee; border-radius:8px; padding:10px; background:#fff; min-height:54px; }
         .portal-team-grid div.active { border-color:#0f2b5b; background:#eef4fb; }
+        .portal-panel-list { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-top:12px; }
+        .portal-panel-list div { border:1px solid #dbe3ee; border-radius:8px; padding:10px; background:#fff; }
+        .portal-panel-list div.active { border-color:#18a689; background:#f0fbf6; }
+        .portal-panel-list span { display:block; color:#64748b; font-size:11px; font-weight:900; text-transform:uppercase; margin-bottom:4px; }
+        .portal-panel-list strong { color:#172033; font-size:13px; }
+        .portal-prep-countdown { color:#8a3b00; }
         .portal-link-button, .portal-button { border:0; background:#0f2b5b; color:white; border-radius:8px; padding:10px 14px; font-weight:800; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:8px; text-decoration:none; font-size:13px; }
         .portal-button:hover, .portal-link-button:hover { background:#12366f; }
         .portal-button.is-secondary { background:#eef2f7; color:#172033; }
@@ -791,6 +1076,8 @@ export async function renderPrivatePortal(container, role, id) {
         .portal-card__heading { display:flex; align-items:center; gap:9px; color:#172033; font-weight:900; font-size:16px; }
         .portal-muted { color:#64748b; line-height:1.55; margin:10px 0 0; font-size:14px; }
         .portal-form { display:grid; gap:12px; margin-top:14px; }
+        .portal-feedback-form { border-top:1px solid #edf1f6; padding-top:14px; }
+        .portal-feedback-target { background:#f8fafc; border:1px solid #edf1f6; border-radius:8px; padding:10px 12px; color:#172033; font-weight:900; }
         .portal-form label { display:grid; gap:6px; color:#526174; font-size:12px; font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
         .portal-input { width:100%; border:1px solid #cfdbe8; border-radius:8px; padding:11px 12px; font-size:14px; font-family:inherit; box-sizing:border-box; color:#172033; }
         .portal-input:focus { outline:2px solid rgba(24,166,137,.18); border-color:#18a689; }
@@ -820,6 +1107,8 @@ export async function renderPrivatePortal(container, role, id) {
         .portal-barcode { height:112px; margin:22px; border-radius:8px; border:1px solid #dbe3ee; background:repeating-linear-gradient(90deg,#172033 0 3px,#fff 3px 7px,#172033 7px 9px,#fff 9px 15px,#172033 15px 20px,#fff 20px 24px); }
         .portal-modal-url { margin:0 22px 18px; padding:12px; border-radius:8px; background:#f8fafc; color:#526174; font-size:13px; line-height:1.45; word-break:break-all; }
         .portal-modal-actions { display:flex; gap:10px; padding:0 22px 22px; }
+        .portal-qr-wrap { display:flex; justify-content:center; padding:24px 24px 12px; }
+        .portal-qr-wrap img { width:256px; height:256px; border:1px solid #dbe3ee; border-radius:8px; padding:10px; background:white; }
         @media (max-width: 900px) {
           .portal-nav { padding:0 16px; }
           .portal-brand { min-width:auto; }
@@ -843,19 +1132,19 @@ export async function renderPrivatePortal(container, role, id) {
       </style>
       ${renderPortalNav(tournament)}
       <main class="portal-page">
-        ${renderHero(safeRole, profile, personName, tournament, pairings)}
+        ${renderHero(safeRole, profile, personName, tournament, pairings, blockInfo)}
         ${renderWarning(personName)}
-        ${renderActionRows(safeRole, profile.id, tournament, pairings, notificationStatus)}
+        ${renderActionRows(safeRole, profile.id, tournament, pairings, notificationStatus, portalSession.checkIn, blockInfo)}
         <div class="portal-grid">
           <div>
-            ${renderInThisRoundPanel(safeRole, profile, pairings, teamMap)}
+            ${renderInThisRoundPanel(safeRole, profile, pairings, teamMap, blockInfo)}
             ${renderMotionsPanel(rounds || [])}
-            ${renderFeedbackCard(safeRole, profile, pairings, blocked)}
+            ${renderFeedbackCard(safeRole, profile, blockInfo)}
           </div>
           <div>
             ${renderRegistrationPanel(safeRole, profile, personName)}
-            ${renderBallotCard(safeRole, pairings)}
-            ${renderCheckInCard(tournament)}
+            ${renderBallotCard(safeRole, profile, pairings, blockInfo)}
+            ${renderCheckInCard(tournament, portalSession.checkIn)}
           </div>
         </div>
         <form class="portal-search-row" id="portal-find-form">
@@ -881,4 +1170,22 @@ export async function renderPrivatePortal(container, role, id) {
   });
 
   document.getElementById('portal-find-form')?.addEventListener('submit', findInPage);
+
+  const updatePrepCountdowns = () => {
+    document.querySelectorAll('[data-prep-end]').forEach(element => {
+      const endTime = Number(element.dataset.prepEnd);
+      const remaining = endTime - Date.now();
+      if (!endTime || Number.isNaN(endTime)) return;
+      if (remaining <= 0) {
+        element.textContent = 'Prep time over';
+        return;
+      }
+      const minutes = Math.floor(remaining / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      element.textContent = `${minutes}:${String(seconds).padStart(2, '0')} prep remaining`;
+    });
+  };
+  updatePrepCountdowns();
+  clearInterval(window.tcPortalPrepTimer);
+  window.tcPortalPrepTimer = setInterval(updatePrepCountdowns, 1000);
 }

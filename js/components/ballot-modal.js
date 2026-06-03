@@ -1,7 +1,7 @@
 import { icon } from './icons.js';
 import { supabase } from '../lib/supabase.js';
 
-export function showBallotModal(pairing, onSave) {
+export function showBallotModal(pairing, onSave, options = {}) {
   const modalRoot = document.getElementById('modal-root');
   const teams = [
     { pos: 'OG', id: pairing.og_team_id },
@@ -109,10 +109,14 @@ export function showBallotModal(pairing, onSave) {
         };
       });
 
-      const { error } = await supabase.from('ballots').upsert(ballots, {
-        onConflict: 'pairing_id,team_id'
-      });
-      if (error) throw error;
+      if (options.onSubmit) {
+        await options.onSubmit(ballots);
+      } else {
+        const { error } = await supabase.from('ballots').upsert(ballots, {
+          onConflict: 'pairing_id,team_id'
+        });
+        if (error) throw error;
+      }
 
       modalRoot.innerHTML = '';
       if (onSave) onSave();
