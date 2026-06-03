@@ -196,7 +196,7 @@ function renderBallotCard(role, pairings) {
             <strong>${escapeHtml(pairing.rounds?.name || 'Round')} · ${escapeHtml(pairing.room_label || 'Room')}</strong>
             <span>Submit the official ballot for this room.</span>
           </div>
-          <button class="portal-button" onclick="window.tcPortalEnterBallot('${escapeJsString(pairing.id)}')">${icon('fileText', 16)} Open ballot</button>
+          <button class="portal-button" type="button" data-portal-action="ballot" data-pairing-id="${escapeHtml(pairing.id)}">${icon('fileText', 16)} Open ballot</button>
         </div>
       `).join('')}
     </section>
@@ -238,7 +238,7 @@ function renderCheckInCard(tournament) {
       <div class="portal-card__heading">${icon('checkSquare', 18)} Check-in</div>
       ${enabled ? `
         <p class="portal-muted">Online check-in is enabled for this tournament.</p>
-        <button class="portal-button" type="button" onclick="window.tcPortalCheckIn()">${icon('check', 16)} Check in now</button>
+        <button class="portal-button" type="button" data-portal-action="check-in">${icon('check', 16)} Check in now</button>
       ` : `
         <p class="portal-muted">This tournament has not enabled online check-in.</p>
       `}
@@ -294,12 +294,12 @@ function renderPortalNav(tournament) {
         </div>
       </div>
       <div class="portal-links">
-        <button type="button" onclick="window.tcPortalScrollTo('portal-round')">Round</button>
-        <button type="button" onclick="window.tcPortalScrollTo('portal-motions')">Motions</button>
-        <button type="button" onclick="window.tcPortalScrollTo('portal-feedback-card')">Feedback</button>
-        <button type="button" onclick="window.tcPortalScrollTo('portal-registration')">Registration</button>
+        <button type="button" data-portal-action="scroll" data-target="portal-round">Round</button>
+        <button type="button" data-portal-action="scroll" data-target="portal-motions">Motions</button>
+        <button type="button" data-portal-action="scroll" data-target="portal-feedback-card">Feedback</button>
+        <button type="button" data-portal-action="scroll" data-target="portal-registration">Registration</button>
       </div>
-      <button class="portal-copy-link" type="button" onclick="window.tcPortalCopyUrl()">${icon('copy', 16)} Copy URL</button>
+      <button class="portal-copy-link" type="button" data-portal-action="copy-url">${icon('copy', 16)} Copy URL</button>
     </nav>
   `;
 }
@@ -342,7 +342,7 @@ function renderHero(role, profile, personName, tournament, pairings) {
       <div class="portal-hero-aside">
         <div class="portal-url-label">Personal URL</div>
         <div class="portal-url-text">${escapeHtml(getPortalUrl())}</div>
-        <button type="button" onclick="window.tcPortalCopyUrl()">${icon('copy', 16)} Copy private link</button>
+        <button type="button" data-portal-action="copy-url">${icon('copy', 16)} Copy private link</button>
       </div>
     </section>
   `;
@@ -365,28 +365,28 @@ function renderActionRows(role, id, tournament, pairings) {
 
   return `
     <section class="portal-actions" aria-label="Portal actions">
-      <button class="portal-action-card" type="button" onclick="window.tcPortalRequestNotifications()">
+      <button class="portal-action-card" type="button" data-portal-action="notifications">
         <span class="portal-action-icon">${icon('bell', 20)}</span>
         <strong>Notifications</strong>
         <small>Get browser alerts when updates are available.</small>
       </button>
-      <button class="portal-action-card ${onlineCheckIn ? '' : 'is-disabled'} ${checkedIn ? 'is-success' : ''}" type="button" ${onlineCheckIn ? 'onclick="window.tcPortalCheckIn()"' : 'disabled'}>
+      <button class="portal-action-card ${onlineCheckIn ? '' : 'is-disabled'} ${checkedIn ? 'is-success' : ''}" type="button" ${onlineCheckIn ? 'data-portal-action="check-in"' : 'disabled'}>
         <span class="portal-action-icon">${icon(checkedIn ? 'checkCircle' : 'checkSquare', 20)}</span>
         <strong>${checkedIn ? 'Checked in' : 'Check in'}</strong>
         <small>${onlineCheckIn ? (checkedIn ? 'Your check-in has been recorded locally.' : 'Mark yourself as present for the current round.') : 'Online check-in is not enabled yet.'}</small>
       </button>
-      <button class="portal-action-card" type="button" onclick="window.tcPortalShowBarcode()">
+      <button class="portal-action-card" type="button" data-portal-action="barcode">
         <span class="portal-action-icon">${icon('dashboard', 20)}</span>
         <strong>Barcode</strong>
         <small>Show this at check-in or copy the private URL.</small>
       </button>
-      <button class="portal-action-card" type="button" onclick="window.tcPortalScrollTo('portal-feedback-card')">
+      <button class="portal-action-card" type="button" data-portal-action="scroll" data-target="portal-feedback-card">
         <span class="portal-action-icon">${icon('pen', 20)}</span>
         <strong>Feedback</strong>
         <small>Jump to the available feedback form.</small>
       </button>
       ${openBallots.map(pairing => `
-        <button class="portal-action-card portal-action-card--primary" type="button" onclick="window.tcPortalEnterBallot('${escapeJsString(pairing.id)}')">
+        <button class="portal-action-card portal-action-card--primary" type="button" data-portal-action="ballot" data-pairing-id="${escapeHtml(pairing.id)}">
           <span class="portal-action-icon">${icon('clipboardCheck', 20)}</span>
           <strong>Submit ballot</strong>
           <small>${escapeHtml(pairing.rounds?.name || 'Round')} ${escapeHtml(pairing.room_label || '')}</small>
@@ -548,12 +548,12 @@ export async function renderPrivatePortal(container, role, id) {
   const blocked = false;
   const personName = getPersonalName(safeRole, profile);
 
-  window.tcPortalEnterBallot = (pairingId) => {
+  const enterBallot = (pairingId) => {
     const pairing = pairings.find(item => item.id === pairingId);
     if (pairing) showBallotModal(pairing, () => renderPrivatePortal(container, safeRole, id));
   };
 
-  window.tcPortalToast = (message) => {
+  const showToast = (message) => {
     const existing = document.getElementById('portal-toast');
     if (existing) existing.remove();
     const toast = document.createElement('div');
@@ -564,37 +564,37 @@ export async function renderPrivatePortal(container, role, id) {
     setTimeout(() => toast.remove(), 2600);
   };
 
-  window.tcPortalScrollTo = (targetId) => {
+  const scrollToPortal = (targetId) => {
     document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  window.tcPortalCopyUrl = () => {
+  const copyPortalUrl = () => {
     navigator.clipboard.writeText(getPortalUrl()).then(
-      () => window.tcPortalToast('Private URL copied.'),
+      () => showToast('Private URL copied.'),
       () => alert(getPortalUrl())
     );
   };
 
-  window.tcPortalRequestNotifications = async () => {
+  const requestNotifications = async () => {
     if (!('Notification' in window)) {
       alert('This browser does not support push notifications.');
       return;
     }
     if (Notification.permission === 'granted') {
-      window.tcPortalToast('Notifications are already enabled.');
+      showToast('Notifications are already enabled.');
       return;
     }
     const permission = await Notification.requestPermission();
-    window.tcPortalToast(permission === 'granted' ? 'Notifications enabled.' : 'Notifications were not enabled.');
+    showToast(permission === 'granted' ? 'Notifications enabled.' : 'Notifications were not enabled.');
   };
 
-  window.tcPortalCheckIn = () => {
+  const checkIn = () => {
     localStorage.setItem(getCheckInKey(safeRole, id, tournamentId), 'yes');
-    window.tcPortalToast('Check-in recorded.');
+    showToast('Check-in recorded.');
     renderPrivatePortal(container, safeRole, id);
   };
 
-  window.tcPortalShowBarcode = () => {
+  const showBarcode = () => {
     const modalRoot = document.getElementById('modal-root');
     const portalUrl = getPortalUrl();
     modalRoot.innerHTML = `
@@ -605,25 +605,40 @@ export async function renderPrivatePortal(container, role, id) {
               <span>Private check-in code</span>
               <h3>${escapeHtml(personName)}</h3>
             </div>
-            <button type="button" onclick="document.getElementById('modal-root').innerHTML=''">${icon('x', 20)}</button>
+            <button type="button" data-modal-close>${icon('x', 20)}</button>
           </div>
           <div class="portal-barcode" aria-label="Private URL barcode"></div>
           <div class="portal-modal-url">${escapeHtml(portalUrl)}</div>
           <div class="portal-modal-actions">
-            <button class="portal-button" type="button" onclick="window.tcPortalCopyUrl()">${icon('copy', 16)} Copy URL</button>
-            <button class="portal-button is-secondary" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Done</button>
+            <button class="portal-button" type="button" data-modal-copy>${icon('copy', 16)} Copy URL</button>
+            <button class="portal-button is-secondary" type="button" data-modal-close>Done</button>
           </div>
         </div>
       </div>
     `;
+    modalRoot.querySelectorAll('[data-modal-close]').forEach(button => {
+      button.addEventListener('click', () => { modalRoot.innerHTML = ''; });
+    });
+    modalRoot.querySelector('[data-modal-copy]')?.addEventListener('click', copyPortalUrl);
   };
 
-  window.tcPortalFindInPage = (event) => {
+  const findInPage = (event) => {
     event.preventDefault();
     const query = new FormData(event.target).get('query');
     if (!query) return;
     window.find(String(query));
   };
+
+  Object.assign(window, {
+    tcPortalEnterBallot: enterBallot,
+    tcPortalToast: showToast,
+    tcPortalScrollTo: scrollToPortal,
+    tcPortalCopyUrl: copyPortalUrl,
+    tcPortalRequestNotifications: requestNotifications,
+    tcPortalCheckIn: checkIn,
+    tcPortalShowBarcode: showBarcode,
+    tcPortalFindInPage: findInPage
+  });
 
   window.tcPortalSubmitFeedback = async (event) => {
     event.preventDefault();
@@ -775,12 +790,27 @@ export async function renderPrivatePortal(container, role, id) {
             ${renderCheckInCard(tournament)}
           </div>
         </div>
-        <form class="portal-search-row" onsubmit="window.tcPortalFindInPage(event)">
+        <form class="portal-search-row" id="portal-find-form">
           <input name="query" type="text" placeholder="Find on this page" aria-label="Find on this page">
           <button type="submit" title="Find">${icon('search', 20)}</button>
-          <button type="button" title="Copy private URL" onclick="window.tcPortalCopyUrl()">${icon('clipboard', 20)}</button>
+          <button type="button" title="Copy private URL" data-portal-action="copy-url">${icon('clipboard', 20)}</button>
         </form>
       </main>
     </div>
   `;
+
+  container.querySelector('.portal-shell')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-portal-action]');
+    if (!button) return;
+
+    const action = button.dataset.portalAction;
+    if (action === 'scroll') scrollToPortal(button.dataset.target);
+    if (action === 'copy-url') copyPortalUrl();
+    if (action === 'notifications') requestNotifications();
+    if (action === 'check-in') checkIn();
+    if (action === 'barcode') showBarcode();
+    if (action === 'ballot') enterBallot(button.dataset.pairingId);
+  });
+
+  document.getElementById('portal-find-form')?.addEventListener('submit', findInPage);
 }
