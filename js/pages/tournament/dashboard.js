@@ -129,7 +129,7 @@ export async function renderTournamentDashboard(container) {
             <div style="font-size:32px; font-weight:800; color:#10B981; margin-bottom:4px;">${stats.subAccepted || 0}</div>
             <div style="font-size:13px; color:var(--color-text-muted);">Accepted</div>
           </div>
-          <div style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:24px; text-align:center;">
+          <div onclick="window.tcNavigate('/tournament/registration-links?view=pending')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault(); window.tcNavigate('/tournament/registration-links?view=pending')}" style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:24px; text-align:center; cursor:pointer; transition:box-shadow 0.2s, transform 0.2s;" onmouseover="this.style.boxShadow='var(--shadow-md)'; this.style.transform='translateY(-1px)'" onmouseout="this.style.boxShadow='none'; this.style.transform='none'">
             <div style="font-size:32px; font-weight:800; color:#F59E0B; margin-bottom:4px;">${stats.subPending || 0}</div>
             <div style="font-size:13px; color:var(--color-text-muted);">Pending</div>
           </div>
@@ -140,7 +140,7 @@ export async function renderTournamentDashboard(container) {
             <div style="color:var(--color-text-muted);">${icon('link', 20)}</div>
             <div style="font-size:13px; font-weight:600;">Create Link</div>
           </div>
-          <div onclick="window.tcNavigate('/tournament/registration-links')" style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:24px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; transition:shadow 0.2s;" onmouseover="this.style.boxShadow='var(--shadow-md)'" onmouseout="this.style.boxShadow='none'">
+          <div onclick="window.tcNavigate('/tournament/registration-links?view=pending')" style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:24px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; transition:shadow 0.2s;" onmouseover="this.style.boxShadow='var(--shadow-md)'" onmouseout="this.style.boxShadow='none'">
             <div style="color:var(--color-text-muted);">${icon('checkSquare', 20)}</div>
             <div style="font-size:13px; font-weight:600;">Approve</div>
           </div>

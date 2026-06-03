@@ -8,6 +8,8 @@ import { sendRegistrationApprovedEmail } from '../../lib/email-service.js';
 export async function renderRegistrationLinks(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
+  const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+  const isPendingView = params.get('view') === 'pending';
   
   // Initialize helper functions
   window.tcAddField = () => {
@@ -369,7 +371,27 @@ export async function renderRegistrationLinks(container) {
       }).join('');
   };
 
+  const reviewQueueSection = `
+    <!-- Review Queue -->
+    <div id="review-queue-header" style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--color-text);">Review queue (0)</div>
+    <div id="review-queue-container" style="margin-bottom:32px;"></div>
+  `;
+
+  const pendingViewHeader = `
+    <div style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:20px 24px; margin-bottom:24px; display:flex; justify-content:space-between; align-items:center; gap:16px;">
+      <div>
+        <div style="font-weight:800; font-size:18px; color:var(--color-text); margin-bottom:4px;">Pending approvals</div>
+        <div style="font-size:13px; color:var(--color-text-muted);">Review submitted registrations and accept entries into the tournament roster.</div>
+      </div>
+      <button onclick="window.tcNavigate('/tournament/registration-links')" class="btn btn--outline" style="display:flex; align-items:center; gap:8px;">
+        ${icon('link', 14)} Registration links
+      </button>
+    </div>
+  `;
+
   const initialContent = `
+    ${isPendingView ? `${pendingViewHeader}${reviewQueueSection}` : ''}
+
     <!-- Top Action Title -->
     <div style="font-weight:700; font-size:16px; margin-bottom:4px; color:var(--color-text);">Create registration link</div>
     <div style="font-size:13px; color:var(--color-text-muted); margin-bottom:16px;">Public link to invite submissions. Tells us how active entries remain, they must go to review.</div>
@@ -475,16 +497,14 @@ export async function renderRegistrationLinks(container) {
     <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--color-text);">Active links</div>
     <div id="active-links-container" style="margin-bottom:32px;"></div>
 
-    <!-- Review Queue -->
-    <div id="review-queue-header" style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--color-text);">Review queue (0)</div>
-    <div id="review-queue-container" style="margin-bottom:32px;"></div>
+    ${isPendingView ? '' : reviewQueueSection}
   `;
 
   renderAppLayout(
     container,
     '/tournament/registration-links',
-    'Registration links',
-    'Manage public registration forms and review pending submissions.',
+    isPendingView ? 'Pending approvals' : 'Registration links',
+    isPendingView ? 'Approve submitted registrations into the roster.' : 'Manage public registration forms and review pending submissions.',
     initialContent
   );
 
