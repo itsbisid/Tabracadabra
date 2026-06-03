@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase.js';
 import { BPEngine } from '../../lib/bp-engine.js';
 import { showBallotModal } from '../../components/ballot-modal.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { sendTournamentPush } from '../../lib/push-service.js';
 
 export async function renderDebateRounds(container) {
   const tournamentId = requireActiveTournamentId();
@@ -150,6 +151,16 @@ export async function renderDebateRounds(container) {
     const { error } = await supabase.from('rounds').update({ status: 'Released' }).eq('id', roundId);
     if (error) alert(error.message);
     else {
+      const { data: round } = await supabase.from('rounds').select('name, round_num').eq('id', roundId).single();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        sendTournamentPush({
+          authorization: `Bearer ${session.access_token}`,
+          tournamentId,
+          title: `${round?.name || `Round ${round?.round_num || ''}`} draw released`,
+          body: 'Your draw is now available in your private portal.'
+        }).catch(pushError => console.warn('Push notification failed:', pushError));
+      }
       alert('Draw Released! Participants will see it now.');
       fetchAndRender();
     }

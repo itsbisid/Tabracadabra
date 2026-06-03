@@ -2,6 +2,7 @@ import { icon } from '../components/icons.js';
 import { showBallotModal } from '../components/ballot-modal.js';
 import { supabase } from '../lib/supabase.js';
 import { escapeHtml, escapeJsString } from '../lib/html.js';
+import { subscribeToPortalPush } from '../lib/push-service.js';
 
 function getRoleLabel(role) {
   return role === 'judge' ? 'Adjudicator' : 'Team';
@@ -576,16 +577,18 @@ export async function renderPrivatePortal(container, role, id) {
   };
 
   const requestNotifications = async () => {
-    if (!('Notification' in window)) {
-      alert('This browser does not support push notifications.');
-      return;
+    try {
+      const result = await subscribeToPortalPush({
+        tournamentId,
+        participantRole: safeRole,
+        participantId: profile.id,
+        participantName: personName,
+        portalUrl: getPortalUrl()
+      });
+      showToast(result.ok ? 'Push notifications enabled.' : 'Push subscription saved.');
+    } catch (error) {
+      alert(error.message || 'Push notifications could not be enabled.');
     }
-    if (Notification.permission === 'granted') {
-      showToast('Notifications are already enabled.');
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    showToast(permission === 'granted' ? 'Notifications enabled.' : 'Notifications were not enabled.');
   };
 
   const checkIn = () => {

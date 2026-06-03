@@ -2,6 +2,7 @@ import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { sendTournamentPush } from '../../lib/push-service.js';
 
 export async function renderAnnouncements(container) {
   const tournamentId = requireActiveTournamentId();
@@ -20,6 +21,15 @@ export async function renderAnnouncements(container) {
     if (error) {
       alert('Error: ' + error.message);
     } else {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        sendTournamentPush({
+          authorization: `Bearer ${session.access_token}`,
+          tournamentId,
+          title,
+          body: content
+        }).catch(pushError => console.warn('Push notification failed:', pushError));
+      }
       fetchAnnouncements();
     }
   };

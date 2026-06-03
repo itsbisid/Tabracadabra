@@ -104,6 +104,46 @@
    Keep `SMTP_PASS` server-side only. Do not prefix it with `VITE_`.
    If the Ashesi SMTP variables are set, emails to `@ashesi.edu.gh` recipients use the Ashesi sender automatically. Other recipients use the default SMTP sender.
 
+### Push notifications
+
+Browser push notifications require VAPID keys and a Supabase table for subscriptions.
+
+Generate keys:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Set these environment variables in local `.env` and Vercel:
+
+```bash
+SUPABASE_SERVICE_ROLE_KEY=...
+WEB_PUSH_SUBJECT=mailto:you@example.com
+WEB_PUSH_PUBLIC_KEY=...
+WEB_PUSH_PRIVATE_KEY=...
+```
+
+Create the subscriptions table in Supabase:
+
+```sql
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  tournament_id uuid not null,
+  participant_role text not null check (participant_role in ('judge', 'team')),
+  participant_id uuid not null,
+  participant_name text,
+  portal_url text,
+  endpoint text not null unique,
+  subscription jsonb not null,
+  user_agent text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists push_subscriptions_tournament_id_idx
+  on public.push_subscriptions (tournament_id);
+```
+
 4. **Launch Development Server**
    ```bash
    npm run dev
