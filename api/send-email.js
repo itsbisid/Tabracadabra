@@ -89,7 +89,7 @@ function buildAdjudicatorApprovedEmail(payload) {
       '',
       `Your application to adjudicate at ${payload.tournamentName || 'your tournament'} has been approved.`,
       '',
-      dashboardUrl ? `Open your judge portal: ${payload.dashboardUrl}` : '',
+      dashboardUrl ? `Your personal judge portal: ${payload.dashboardUrl}` : '',
       '',
       'Use your portal to check draws, receive feedback assignments, and stay updated throughout the tournament.',
       '',
@@ -105,6 +105,7 @@ function buildAdjudicatorApprovedEmail(payload) {
           <h1 style="font-size:22px;font-weight:800;margin:0 0 8px;">You're in.</h1>
           <p style="color:#475569;margin:0 0 24px;">Hi ${name}, your application to adjudicate at <strong>${tournamentName}</strong> has been approved.</p>
           ${dashboardUrl ? `<a href="${dashboardUrl}" style="display:inline-block;background:#10b981;color:white;font-weight:700;font-size:15px;padding:14px 28px;border-radius:8px;text-decoration:none;">Open judge portal</a>` : ''}
+          ${dashboardUrl ? `<p style="color:#475569;font-size:14px;margin:18px 0 0;">Your personal judge portal:<br><a href="${dashboardUrl}" style="color:#047857;font-weight:700;word-break:break-all;">${dashboardUrl}</a></p>` : ''}
           <p style="color:#64748b;font-size:14px;margin-top:24px;">Use your portal to check draws, receive feedback assignments, and stay updated throughout the tournament.</p>
           <p style="color:#94a3b8;font-size:13px;margin-top:40px;">See you in the tab room,<br>TabraCadabra</p>
         </div>
@@ -126,7 +127,7 @@ function buildSpeakerApprovedEmail(payload) {
       '',
       `Your team ${payload.teamName || 'your team'} has been registered for ${payload.tournamentName || 'your tournament'}.`,
       '',
-      dashboardUrl ? `Open your team portal: ${payload.dashboardUrl}` : '',
+      dashboardUrl ? `Your personal team portal: ${payload.dashboardUrl}` : '',
       '',
       'Use your portal to check draws, room allocations, and announcements as the tournament unfolds.',
       '',
@@ -142,6 +143,7 @@ function buildSpeakerApprovedEmail(payload) {
           <h1 style="font-size:22px;font-weight:800;margin:0 0 8px;">You're in.</h1>
           <p style="color:#475569;margin:0 0 24px;">Hi ${name}, your team <strong>${teamName}</strong> has been registered for <strong>${tournamentName}</strong>.</p>
           ${dashboardUrl ? `<a href="${dashboardUrl}" style="display:inline-block;background:#0038A8;color:white;font-weight:700;font-size:15px;padding:14px 28px;border-radius:8px;text-decoration:none;">Open team portal</a>` : ''}
+          ${dashboardUrl ? `<p style="color:#475569;font-size:14px;margin:18px 0 0;">Your personal team portal:<br><a href="${dashboardUrl}" style="color:#0038A8;font-weight:700;word-break:break-all;">${dashboardUrl}</a></p>` : ''}
           <p style="color:#64748b;font-size:14px;margin-top:24px;">Use your portal to check draws, room allocations, and announcements as the tournament unfolds.</p>
           <p style="color:#94a3b8;font-size:13px;margin-top:40px;">See you across the floor,<br>TabraCadabra</p>
         </div>

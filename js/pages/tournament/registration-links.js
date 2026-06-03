@@ -98,7 +98,7 @@ export async function renderRegistrationLinks(container) {
   window.tcAcceptSubmission = async (id, btn) => {
     const originalText = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = 'Accepting...';
+    btn.innerHTML = 'Approving...';
 
     // 1. Get submission data
     const { data: sub, error: subErr } = await supabase
@@ -196,9 +196,23 @@ export async function renderRegistrationLinks(container) {
 
       const displayName = sub.role === 'adjudicator' ? sub.data.full_name : sub.data.team_name;
       const safeName = escapeHtml(displayName);
-      const safeNameJs = escapeJsString(displayName);
       const safeRole = escapeHtml(sub.role);
       const safeEmailMessage = escapeHtml(emailResult.message);
+      const portalListHtml = emails.map(email => `
+        <div style="margin-top:8px;">
+          <strong>${escapeHtml(email.name || displayName)}:</strong>
+          <a href="${escapeHtml(email.dashboardUrl)}" style="color:var(--color-primary); font-weight:700; word-break:break-all;">${escapeHtml(email.dashboardUrl)}</a>
+        </div>
+      `).join('');
+      const copyContent = [
+        `Hi ${displayName || 'there'},`,
+        '',
+        `Your registration as a ${sub.role} has been approved! You can now access your tournament dashboard for draws, check-ins, and announcements.`,
+        '',
+        'Your personal portal URL:',
+        ...emails.map(email => `${email.name || displayName}: ${email.dashboardUrl}`),
+      ].join('\n');
+      const copyContentJs = escapeJsString(copyContent);
 
       const modalRoot = document.getElementById('modal-root');
       modalRoot.innerHTML = `
@@ -222,10 +236,11 @@ export async function renderRegistrationLinks(container) {
                  <div style="font-weight:700; color:var(--color-text); margin-bottom:12px;">Subject: Registration Approved!</div>
                  Hi ${safeName},<br><br>
                  Your registration as a ${safeRole} has been approved! You can now access your tournament dashboard for draws, check-ins, and announcements.<br><br>
-                 Access your portal: <strong>${escapeHtml(sub.role === 'adjudicator' ? judgePortalUrl : teamPortalUrl)}</strong>
+                 <div style="font-weight:700; color:var(--color-text); margin-bottom:4px;">Personal portal URL${emails.length > 1 ? 's' : ''}</div>
+                 ${portalListHtml}
                </div>
                <div style="margin-top:24px; display:flex; gap:12px;">
-                 <button onclick="navigator.clipboard.writeText('Hi ${safeNameJs}, your registration has been approved...').then(() => alert('Copied!'))" class="btn btn--primary" style="flex:1;">Copy Content</button>
+                 <button onclick="navigator.clipboard.writeText('${copyContentJs}').then(() => alert('Copied!'))" class="btn btn--primary" style="flex:1;">Copy Content</button>
                  <button onclick="document.getElementById('modal-root').innerHTML=''" class="btn btn--outline" style="flex:1;">Done</button>
                </div>
             </div>
@@ -363,7 +378,7 @@ export async function renderRegistrationLinks(container) {
           </div>
           <div style="display:flex; gap:8px;">
             <button onclick="window.tcEditSubmission('${subId}')" class="btn btn--outline" style="padding:6px 12px; font-size:12px;">Edit</button>
-            <button onclick="window.tcAcceptSubmission('${subId}', this)" class="btn btn--primary" style="padding:6px 16px; font-size:12px;">Accept</button>
+            <button onclick="window.tcAcceptSubmission('${subId}', this)" class="btn btn--primary" style="padding:6px 16px; font-size:12px;">Approve</button>
             <button onclick="window.tcRejectSubmission('${subId}')" class="btn btn--outline" style="padding:6px 12px; font-size:12px; color:var(--color-danger); border-color:#FEE2E2;">Decline</button>
           </div>
         </div>

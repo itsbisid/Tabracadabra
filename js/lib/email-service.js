@@ -43,6 +43,7 @@ export async function sendRegistrationSubmittedEmail({ to, name, role, tournamen
 export async function sendRegistrationApprovedEmail({ to, name, role, teamName, tournamentId, tournamentName, dashboardUrl, idempotencyKey }) {
   const authorization = await getAuthHeader();
   const template = role === 'adjudicator' ? 'adjudicator-approved' : 'speaker-approved';
+  if (!dashboardUrl) throw new Error('A personal portal URL is required for approval emails.');
 
   const response = await fetch('/api/send-email', {
     method: 'POST',
@@ -55,7 +56,7 @@ export async function sendRegistrationApprovedEmail({ to, name, role, teamName, 
       role,
       tournamentId,
       tournamentName,
-      dashboardUrl: dashboardUrl || `${window.location.origin}/#/dashboard`,
+      dashboardUrl,
       idempotencyKey
     })
   });

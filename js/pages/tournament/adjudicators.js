@@ -2,6 +2,7 @@ import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { escapeHtml, escapeJsString } from '../../lib/html.js';
 
 export async function renderAdjudicators(container) {
   const tournamentId = requireActiveTournamentId();
@@ -53,30 +54,37 @@ export async function renderAdjudicators(container) {
     input.click();
   };
 
-  window.tcShowEmailModal = (name, email) => {
+  window.tcShowEmailModal = (id, name, email) => {
+    const portalUrl = `${window.location.origin}/#/portal/judge/${id}`;
+    const safeName = escapeHtml(name || 'Adjudicator');
+    const safeEmail = escapeHtml(email || '');
+    const safePortalUrl = escapeHtml(portalUrl);
+    const emailBody = `Hi ${name || 'there'},\n\nYour registration as an Adjudicator has been approved! You can now access your tournament dashboard to view draws, check-in for rounds, and receive live announcements.\n\nView your dashboard here:\n${portalUrl}\n\nBest regards,\nTournament Tab Core`;
+    const emailBodyJs = escapeJsString(emailBody);
+    const mailtoHref = `mailto:${encodeURIComponent(email || '')}?subject=${encodeURIComponent('Tournament Invitation')}&body=${encodeURIComponent(emailBody)}`;
     const modalRoot = document.getElementById('modal-root');
     modalRoot.innerHTML = `
       <div style="position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; z-index:9999;">
         <div style="background:white; width:500px; border-radius:12px; overflow:hidden; box-shadow:0 24px 48px rgba(0,0,0,0.2);">
           <div style="padding:24px; background:#f8fafc; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
-            <h3 style="font-weight:800; font-size:16px;">Invitation Email for ${name}</h3>
+            <h3 style="font-weight:800; font-size:16px;">Invitation Email for ${safeName}</h3>
             <button onclick="document.getElementById('modal-root').innerHTML=''" style="border:none; background:none; cursor:pointer; color:#94a3b8;">${icon('x', 20)}</button>
           </div>
           <div style="padding:24px;">
             <div style="margin-bottom:16px;">
               <label style="font-size:11px; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px; display:block;">Recipient</label>
-              <div style="font-size:14px; color:var(--color-text);">${email}</div>
+              <div style="font-size:14px; color:var(--color-text);">${safeEmail}</div>
             </div>
             <div style="background:#f1f5f9; border-radius:8px; padding:16px; font-size:13px; line-height:1.6; color:#334155; margin-bottom:24px;">
               Subject: Welcome to the Tournament Core<br><br>
-              Hi ${name},<br><br>
+              Hi ${safeName},<br><br>
               Your registration as an Adjudicator has been approved! You can now access your tournament dashboard to view draws, check-in for rounds, and receive live announcements.<br><br>
-              View your dashboard here: <strong>${window.location.origin}/#/dashboard</strong><br><br>
+              View your dashboard here: <strong>${safePortalUrl}</strong><br><br>
               Best regards,<br>Tournament Tab Core
             </div>
             <div style="display:flex; gap:12px;">
-              <button onclick="navigator.clipboard.writeText('Hi ${name}...').then(() => alert('Copied to clipboard!'))" class="btn btn--primary" style="flex:1; gap:8px;">${icon('copy', 16)} Copy Content</button>
-              <a href="mailto:${email}?subject=Tournament Invitation&body=Hi ${name}, Your registration has been approved!" class="btn btn--outline" style="flex:1; display:flex; align-items:center; justify-content:center; gap:8px;">${icon('mail', 16)} Send via App</a>
+              <button onclick="navigator.clipboard.writeText('${emailBodyJs}').then(() => alert('Copied to clipboard!'))" class="btn btn--primary" style="flex:1; gap:8px;">${icon('copy', 16)} Copy Content</button>
+              <a href="${escapeHtml(mailtoHref)}" class="btn btn--outline" style="flex:1; display:flex; align-items:center; justify-content:center; gap:8px;">${icon('mail', 16)} Send via App</a>
             </div>
           </div>
         </div>
@@ -153,7 +161,7 @@ export async function renderAdjudicators(container) {
                 <td style="padding:16px;">
                   <div style="display:flex; align-items:center; gap:12px;">
                     <span style="background:#ECFDF5; color:#10B981; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">${j.status || 'Active'}</span>
-                    <button onclick="window.tcShowEmailModal('${j.name}', '${j.email}')" class="btn btn--outline btn--sm" style="font-size:11px; padding:4px 12px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
+                    <button onclick="window.tcShowEmailModal('${escapeJsString(j.id)}', '${escapeJsString(j.name || '')}', '${escapeJsString(j.email || '')}')" class="btn btn--outline btn--sm" style="font-size:11px; padding:4px 12px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
                       ${icon('mail', 14)} Send Email
                     </button>
                     <button onclick="window.tcDeleteAdjudicator('${j.id}')" style="color:#ef4444; border:none; background:none; cursor:pointer; padding:4px;">
