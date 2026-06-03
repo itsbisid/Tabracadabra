@@ -54,13 +54,24 @@ export async function renderDebateRounds(container) {
     const prepTime = prompt('Enter prep time in minutes:', defaultPrep);
     if (prepTime === null) return;
 
-    const { error } = await supabase.from('rounds').update({
+    const { data: round, error } = await supabase.from('rounds').update({
       motion_released_at: new Date().toISOString(),
       prep_time_override: parseInt(prepTime)
-    }).eq('id', roundId);
+    }).eq('id', roundId).select('name, round_num, motion_text').single();
 
     if (error) alert(error.message);
-    else fetchAndRender();
+    else {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        sendTournamentPush({
+          authorization: `Bearer ${session.access_token}`,
+          tournamentId,
+          title: `${round?.name || `Round ${round?.round_num || ''}`} motion released`,
+          body: round?.motion_text || 'The motion is now available in your private portal.'
+        }).catch(pushError => console.warn('Push notification failed:', pushError));
+      }
+      fetchAndRender();
+    }
   };
 
   const setupTimers = (rounds) => {

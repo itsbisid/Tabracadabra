@@ -2,7 +2,7 @@ import { icon } from '../components/icons.js';
 import { showBallotModal } from '../components/ballot-modal.js';
 import { supabase } from '../lib/supabase.js';
 import { escapeHtml, escapeJsString } from '../lib/html.js';
-import { subscribeToPortalPush } from '../lib/push-service.js';
+import { getPortalPushStatus, subscribeToPortalPush } from '../lib/push-service.js';
 
 function getRoleLabel(role) {
   return role === 'judge' ? 'Adjudicator' : 'Team';
@@ -359,17 +359,73 @@ function getOpenBallots(role, pairings) {
   });
 }
 
-function renderActionRows(role, id, tournament, pairings) {
+function getNotificationCopy(status = {}) {
+  if (status.state === 'subscribed') {
+    return {
+      className: 'is-success',
+      iconName: 'checkCircle',
+      title: 'Notifications on',
+      body: 'This private portal is subscribed for tournament updates.'
+    };
+  }
+
+  if (status.state === 'denied') {
+    return {
+      className: 'is-disabled',
+      iconName: 'bell',
+      title: 'Notifications blocked',
+      body: 'Browser permission is blocked. Enable it in site settings to receive alerts.'
+    };
+  }
+
+  if (status.state === 'unsupported') {
+    return {
+      className: 'is-disabled',
+      iconName: 'bell',
+      title: 'Notifications unavailable',
+      body: 'This browser does not support push notifications.'
+    };
+  }
+
+  if (status.state === 'local_only') {
+    return {
+      className: 'is-warning',
+      iconName: 'bell',
+      title: 'Resync notifications',
+      body: 'Your browser has a subscription, but the tournament record needs to be saved again.'
+    };
+  }
+
+  if (status.state === 'unknown') {
+    return {
+      className: '',
+      iconName: 'bell',
+      title: 'Notifications',
+      body: 'Tap to verify or enable tournament alerts for this portal.'
+    };
+  }
+
+  return {
+    className: '',
+    iconName: 'bell',
+    title: 'Notifications',
+    body: 'Get browser alerts when updates are available.'
+  };
+}
+
+function renderActionRows(role, id, tournament, pairings, notificationStatus) {
   const onlineCheckIn = Boolean(tournament?.settings?.online_check_in || tournament?.settings?.onlineCheckIn || tournament?.settings?.check_in_enabled);
   const openBallots = getOpenBallots(role, pairings);
   const checkedIn = isCheckedIn(role, id, tournament?.id);
+  const notification = getNotificationCopy(notificationStatus);
+  const notificationDisabled = ['denied', 'unsupported'].includes(notificationStatus?.state);
 
   return `
     <section class="portal-actions" aria-label="Portal actions">
-      <button class="portal-action-card" type="button" data-portal-action="notifications">
-        <span class="portal-action-icon">${icon('bell', 20)}</span>
-        <strong>Notifications</strong>
-        <small>Get browser alerts when updates are available.</small>
+      <button class="portal-action-card ${notification.className}" type="button" ${notificationDisabled ? 'disabled' : 'data-portal-action="notifications"'}>
+        <span class="portal-action-icon">${icon(notification.iconName, 20)}</span>
+        <strong>${notification.title}</strong>
+        <small>${notification.body}</small>
       </button>
       <button class="portal-action-card ${onlineCheckIn ? '' : 'is-disabled'} ${checkedIn ? 'is-success' : ''}" type="button" ${onlineCheckIn ? 'data-portal-action="check-in"' : 'disabled'}>
         <span class="portal-action-icon">${icon(checkedIn ? 'checkCircle' : 'checkSquare', 20)}</span>
@@ -548,6 +604,11 @@ export async function renderPrivatePortal(container, role, id) {
   const pairings = await fetchPairings(safeRole, profile.id, tournamentId);
   const blocked = false;
   const personName = getPersonalName(safeRole, profile);
+  const notificationStatus = await getPortalPushStatus({
+    tournamentId,
+    participantRole: safeRole,
+    participantId: profile.id
+  }).catch(error => ({ state: 'unknown', message: error.message, subscribed: false }));
 
   const enterBallot = (pairingId) => {
     const pairing = pairings.find(item => item.id === pairingId);
@@ -586,6 +647,7 @@ export async function renderPrivatePortal(container, role, id) {
         portalUrl: getPortalUrl()
       });
       showToast(result.ok ? 'Push notifications enabled.' : 'Push subscription saved.');
+      renderPrivatePortal(container, safeRole, id);
     } catch (error) {
       alert(error.message || 'Push notifications could not be enabled.');
     }
@@ -696,7 +758,10 @@ export async function renderPrivatePortal(container, role, id) {
         .portal-action-card:disabled, .portal-action-card.is-disabled { cursor:not-allowed; opacity:.72; transform:none; box-shadow:none; }
         .portal-action-card--primary { background:#0f2b5b; color:white; border-color:#0f2b5b; }
         .portal-action-card.is-success { border-color:#a6dbc5; background:#f0fbf6; }
+        .portal-action-card.is-warning { border-color:#f2c078; background:#fff8eb; }
         .portal-action-icon { width:36px; height:36px; border-radius:8px; background:#eef4fb; color:#0f2b5b; display:flex; align-items:center; justify-content:center; }
+        .portal-action-card.is-success .portal-action-icon { background:#dff7ec; color:#047857; }
+        .portal-action-card.is-warning .portal-action-icon { background:#ffe9bd; color:#8a3b00; }
         .portal-action-card--primary .portal-action-icon { background:rgba(255,255,255,.12); color:white; }
         .portal-action-card strong { color:#172033; font-size:15px; }
         .portal-action-card--primary strong { color:white; }
@@ -780,7 +845,7 @@ export async function renderPrivatePortal(container, role, id) {
       <main class="portal-page">
         ${renderHero(safeRole, profile, personName, tournament, pairings)}
         ${renderWarning(personName)}
-        ${renderActionRows(safeRole, profile.id, tournament, pairings)}
+        ${renderActionRows(safeRole, profile.id, tournament, pairings, notificationStatus)}
         <div class="portal-grid">
           <div>
             ${renderInThisRoundPanel(safeRole, profile, pairings, teamMap)}

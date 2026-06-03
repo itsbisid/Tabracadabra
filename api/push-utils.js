@@ -92,6 +92,26 @@ export async function listPushSubscriptions(tournamentId) {
   return Array.isArray(body) ? body : [];
 }
 
+export async function findPushSubscription({ tournamentId, participantRole, participantId, endpoint }) {
+  const config = assertPushConfigured();
+  const query = [
+    `endpoint=eq.${encodeURIComponent(endpoint)}`,
+    `tournament_id=eq.${encodeURIComponent(tournamentId)}`,
+    `participant_role=eq.${encodeURIComponent(participantRole)}`,
+    `participant_id=eq.${encodeURIComponent(participantId)}`,
+    'select=id,updated_at'
+  ].join('&');
+  const response = await fetch(pushTableUrl(config, `?${query}`), {
+    headers: supabaseHeaders(config)
+  });
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.message || body?.error || 'Could not check push subscription.');
+  }
+  return Array.isArray(body) ? body[0] : null;
+}
+
 export async function deletePushSubscription(endpoint) {
   const config = assertPushConfigured();
   const response = await fetch(pushTableUrl(config, `?endpoint=eq.${encodeURIComponent(endpoint)}`), {

@@ -22,6 +22,54 @@ export function isPushSupported() {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
 
+async function getRegisteredPushSubscription() {
+  const registration = await navigator.serviceWorker.getRegistration('/sw.js');
+  return registration ? registration.pushManager.getSubscription() : null;
+}
+
+export async function getPortalPushStatus({ tournamentId, participantRole, participantId }) {
+  if (!isPushSupported()) {
+    return { state: 'unsupported', permission: 'unsupported', subscribed: false };
+  }
+
+  const permission = Notification.permission;
+  if (permission === 'denied') {
+    return { state: 'denied', permission, subscribed: false };
+  }
+
+  let subscription = await getRegisteredPushSubscription();
+  if (!subscription && permission === 'granted') {
+    const registration = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    subscription = await registration.pushManager.getSubscription();
+  }
+
+  if (!subscription) {
+    return { state: 'not_subscribed', permission, subscribed: false };
+  }
+
+  const response = await fetch('/api/push-status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tournamentId,
+      participantRole,
+      participantId,
+      endpoint: subscription.endpoint
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Push subscription status could not be checked.');
+
+  return {
+    state: data.subscribed ? 'subscribed' : 'local_only',
+    permission,
+    subscribed: Boolean(data.subscribed),
+    updatedAt: data.updatedAt || null
+  };
+}
+
 export async function subscribeToPortalPush({ tournamentId, participantRole, participantId, participantName, portalUrl }) {
   if (!isPushSupported()) throw new Error('This browser does not support push notifications.');
 
