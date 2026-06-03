@@ -191,10 +191,10 @@ function renderBallotCard(role, pairings) {
       ${openBallots.length === 0 ? `
         <p class="portal-muted">No ballot is currently open for this adjudicator link.</p>
       ` : openBallots.map(pairing => `
-        <div style="display:flex; justify-content:space-between; gap:16px; align-items:center; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:12px;">
+        <div class="portal-inline-task">
           <div>
-            <div style="font-weight:900;">${escapeHtml(pairing.rounds?.name || 'Round')} - ${escapeHtml(pairing.room_label || 'Room')}</div>
-            <div style="font-size:13px; color:#64748b;">Submit the official ballot for this room.</div>
+            <strong>${escapeHtml(pairing.rounds?.name || 'Round')} · ${escapeHtml(pairing.room_label || 'Room')}</strong>
+            <span>Submit the official ballot for this room.</span>
           </div>
           <button class="portal-button" onclick="window.tcPortalEnterBallot('${escapeJsString(pairing.id)}')">${icon('fileText', 16)} Open ballot</button>
         </div>
@@ -215,15 +215,13 @@ function renderFeedbackCard(role, profile, pairings, blocked) {
         <p class="portal-muted">Feedback forms will appear here after a completed round.</p>
       ` : `
         <p class="portal-muted">${blocked ? 'Feedback is required before the next draw is unlocked.' : 'You can submit feedback for your latest completed round.'}</p>
-        <form onsubmit="window.tcPortalSubmitFeedback(event)" style="display:grid; gap:12px; margin-top:14px;">
+        <form onsubmit="window.tcPortalSubmitFeedback(event)" class="portal-form">
           <input type="hidden" name="pairing_id" value="${escapeHtml(latest.id)}">
           <input type="hidden" name="target_id" value="${escapeHtml(latest.chair_id)}">
           <input type="hidden" name="submitted_by_id" value="${escapeHtml(profile.id)}">
           <input type="hidden" name="submitted_role" value="${escapeHtml(role === 'judge' ? 'JUDGE' : 'TEAM')}">
-          <label style="font-size:12px; font-weight:800; color:#64748b; text-transform:uppercase;">Score</label>
-          <input class="portal-input" name="score" type="number" min="1" max="10" required placeholder="1-10">
-          <label style="font-size:12px; font-weight:800; color:#64748b; text-transform:uppercase;">Comments</label>
-          <textarea class="portal-input" name="comments" rows="4" placeholder="Optional context for tab/adjudication core"></textarea>
+          <label>Score<input class="portal-input" name="score" type="number" min="1" max="10" required placeholder="1-10"></label>
+          <label>Comments<textarea class="portal-input" name="comments" rows="4" placeholder="Optional context for tab/adjudication core"></textarea></label>
           <button class="portal-button" type="submit">${icon('send', 16)} Submit feedback</button>
         </form>
       `}
@@ -239,8 +237,8 @@ function renderCheckInCard(tournament) {
     <section class="portal-card">
       <div class="portal-card__heading">${icon('checkSquare', 18)} Check-in</div>
       ${enabled ? `
-        <p class="portal-muted">Online check-in is enabled for this tournament. Your check-in action will appear here when the next round opens.</p>
-        <button class="portal-button" type="button" onclick="alert('Check-in is not open yet.')">${icon('check', 16)} Check in</button>
+        <p class="portal-muted">Online check-in is enabled for this tournament.</p>
+        <button class="portal-button" type="button" onclick="window.tcPortalCheckIn()">${icon('check', 16)} Check in now</button>
       ` : `
         <p class="portal-muted">This tournament has not enabled online check-in.</p>
       `}
@@ -273,24 +271,35 @@ function getBreakCategory(profile) {
   return profile.manual_category_override || profile.division || getSpeakerCategory(profile, profile.speaker1_name) || 'Open';
 }
 
+function getPortalUrl() {
+  return window.location.href;
+}
+
+function getCheckInKey(role, id, tournamentId) {
+  return `tc-checkin:${tournamentId}:${role}:${id}`;
+}
+
+function isCheckedIn(role, id, tournamentId) {
+  return localStorage.getItem(getCheckInKey(role, id, tournamentId)) === 'yes';
+}
+
 function renderPortalNav(tournament) {
   return `
     <nav class="portal-nav">
       <div class="portal-brand">
-        <div class="portal-brand-mark">${icon('logo', 22)}</div>
-        <span>${escapeHtml(getTournamentName(tournament))}</span>
-        <span style="color:#64748b;">${icon('chevronDown', 14)}</span>
+        <div class="portal-brand-mark">${icon('logo', 20)}</div>
+        <div>
+          <strong>${escapeHtml(getTournamentName(tournament))}</strong>
+          <span>Private portal</span>
+        </div>
       </div>
       <div class="portal-links">
-        <span>Team Tab</span>
-        <span>Speaker Tab</span>
-        <span>Motions Tab</span>
-        <span>Results</span>
-        <span>Break</span>
-        <span>Participants</span>
-        <span>Institutions</span>
+        <button type="button" onclick="window.tcPortalScrollTo('portal-round')">Round</button>
+        <button type="button" onclick="window.tcPortalScrollTo('portal-motions')">Motions</button>
+        <button type="button" onclick="window.tcPortalScrollTo('portal-feedback-card')">Feedback</button>
+        <button type="button" onclick="window.tcPortalScrollTo('portal-registration')">Registration</button>
       </div>
-      <span class="portal-login">Login</span>
+      <button class="portal-copy-link" type="button" onclick="window.tcPortalCopyUrl()">${icon('copy', 16)} Copy URL</button>
     </nav>
   `;
 }
@@ -300,11 +309,42 @@ function renderWarning(personName) {
     <div class="portal-warning">
       ${icon('alertCircle', 20)}
       <div>
-        The URL of this page is personalised to you, ${escapeHtml(personName)}.
-        <strong>Do not share it with anyone;</strong> anyone who knows this URL can submit results and/or feedback for your debates.
-        You may bookmark this page and return here after each debate for the available actions.
+        This link is personalized for <strong>${escapeHtml(personName)}</strong>. Keep it private because anyone with this URL can submit actions for this participant.
       </div>
     </div>
+  `;
+}
+
+function renderHero(role, profile, personName, tournament, pairings) {
+  const tournamentName = getTournamentName(tournament);
+  const releasedPairing = pairings
+    .filter(pairing => pairing.rounds?.status === 'Released')
+    .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
+  const assignment = releasedPairing
+    ? `${releasedPairing.rounds?.name || 'Round'} · ${releasedPairing.room_label || 'Venue TBD'}`
+    : 'No active assignment';
+  const roleText = role === 'judge'
+    ? `Adjudicator${profile.is_trainee ? ' / Trainee' : ''}`
+    : profile.name || 'Team';
+  const institution = profile.institution || (role === 'judge' ? 'Independent' : 'Unaffiliated');
+
+  return `
+    <section class="portal-hero">
+      <div class="portal-hero-main">
+        <div class="portal-kicker">${escapeHtml(tournamentName)} · ${escapeHtml(getRoleLabel(role))}</div>
+        <h1>${escapeHtml(personName)}</h1>
+        <div class="portal-hero-meta">
+          <span>${icon(role === 'judge' ? 'gavel' : 'users', 16)} ${escapeHtml(roleText)}</span>
+          <span>${icon('building', 16)} ${escapeHtml(institution)}</span>
+          <span>${icon('mapPin', 16)} ${escapeHtml(assignment)}</span>
+        </div>
+      </div>
+      <div class="portal-hero-aside">
+        <div class="portal-url-label">Personal URL</div>
+        <div class="portal-url-text">${escapeHtml(getPortalUrl())}</div>
+        <button type="button" onclick="window.tcPortalCopyUrl()">${icon('copy', 16)} Copy private link</button>
+      </div>
+    </section>
   `;
 }
 
@@ -318,31 +358,38 @@ function getOpenBallots(role, pairings) {
   });
 }
 
-function renderActionRows(role, tournament, pairings) {
+function renderActionRows(role, id, tournament, pairings) {
   const onlineCheckIn = Boolean(tournament?.settings?.online_check_in || tournament?.settings?.onlineCheckIn || tournament?.settings?.check_in_enabled);
   const openBallots = getOpenBallots(role, pairings);
+  const checkedIn = isCheckedIn(role, id, tournament?.id);
 
   return `
-    <section class="portal-action-list">
-      <button class="portal-action-row" type="button" onclick="alert('Push notifications are not enabled yet.')">
-        <span>${icon('bell', 20)} Subscribe to Push Notifications</span>
-        ${icon('chevronRight', 18)}
+    <section class="portal-actions" aria-label="Portal actions">
+      <button class="portal-action-card" type="button" onclick="window.tcPortalRequestNotifications()">
+        <span class="portal-action-icon">${icon('bell', 20)}</span>
+        <strong>Notifications</strong>
+        <small>Get browser alerts when updates are available.</small>
       </button>
-      <div class="portal-action-row portal-action-row--notice">
-        <span>${icon('alertCircle', 20)} ${onlineCheckIn ? 'You are not currently checked in.' : 'Online check-in is not currently enabled.'}</span>
-      </div>
-      <button class="portal-action-row" type="button" onclick="alert('Barcode check-in will appear when enabled by the tournament.')">
-        <span>${icon('dashboard', 20)} Show barcode for check-in</span>
-        ${icon('chevronRight', 18)}
+      <button class="portal-action-card ${onlineCheckIn ? '' : 'is-disabled'} ${checkedIn ? 'is-success' : ''}" type="button" ${onlineCheckIn ? 'onclick="window.tcPortalCheckIn()"' : 'disabled'}>
+        <span class="portal-action-icon">${icon(checkedIn ? 'checkCircle' : 'checkSquare', 20)}</span>
+        <strong>${checkedIn ? 'Checked in' : 'Check in'}</strong>
+        <small>${onlineCheckIn ? (checkedIn ? 'Your check-in has been recorded locally.' : 'Mark yourself as present for the current round.') : 'Online check-in is not enabled yet.'}</small>
       </button>
-      <button class="portal-action-row" type="button" onclick="document.getElementById('portal-feedback-card')?.scrollIntoView({ behavior: 'smooth' })">
-        <span>${icon('pen', 20)} Submit Feedback</span>
-        ${icon('chevronRight', 18)}
+      <button class="portal-action-card" type="button" onclick="window.tcPortalShowBarcode()">
+        <span class="portal-action-icon">${icon('dashboard', 20)}</span>
+        <strong>Barcode</strong>
+        <small>Show this at check-in or copy the private URL.</small>
+      </button>
+      <button class="portal-action-card" type="button" onclick="window.tcPortalScrollTo('portal-feedback-card')">
+        <span class="portal-action-icon">${icon('pen', 20)}</span>
+        <strong>Feedback</strong>
+        <small>Jump to the available feedback form.</small>
       </button>
       ${openBallots.map(pairing => `
-        <button class="portal-action-row" type="button" onclick="window.tcPortalEnterBallot('${escapeJsString(pairing.id)}')">
-          <span>${icon('clipboardCheck', 20)} Submit Ballot - ${escapeHtml(pairing.rounds?.name || 'Round')} ${escapeHtml(pairing.room_label || '')}</span>
-          ${icon('chevronRight', 18)}
+        <button class="portal-action-card portal-action-card--primary" type="button" onclick="window.tcPortalEnterBallot('${escapeJsString(pairing.id)}')">
+          <span class="portal-action-icon">${icon('clipboardCheck', 20)}</span>
+          <strong>Submit ballot</strong>
+          <small>${escapeHtml(pairing.rounds?.name || 'Round')} ${escapeHtml(pairing.room_label || '')}</small>
         </button>
       `).join('')}
     </section>
@@ -356,10 +403,16 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap) {
 
   if (!releasedPairing) {
     return `
-      <section class="portal-panel">
-        <h2>In This Round</h2>
+      <section id="portal-round" class="portal-panel">
+        <div class="portal-panel-head">
+          <div>
+            <span>Current assignment</span>
+            <h2>In this round</h2>
+          </div>
+          <div class="portal-status-pill is-muted">Standby</div>
+        </div>
         <div class="portal-panel-body">
-          <em>${role === 'judge' ? 'You are not assigned to a debate this round.' : 'You do not have a debate this round.'}</em>
+          <p class="portal-empty">${role === 'judge' ? 'You are not assigned to a debate this round.' : 'You do not have a debate this round.'}</p>
         </div>
       </section>
     `;
@@ -368,11 +421,25 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap) {
   const position = role === 'judge' ? 'Chair' : positionForTeam(releasedPairing, profile.id);
 
   return `
-    <section class="portal-panel">
-      <h2>In This Round</h2>
+    <section id="portal-round" class="portal-panel">
+      <div class="portal-panel-head">
+        <div>
+          <span>Current assignment</span>
+          <h2>In this round</h2>
+        </div>
+        <div class="portal-status-pill">${escapeHtml(position)}</div>
+      </div>
       <div class="portal-panel-body">
-        <div class="portal-round-line"><strong>${escapeHtml(releasedPairing.rounds?.name || 'Round')}</strong> <span>${escapeHtml(position)}</span></div>
-        <div style="margin-top:8px;"><strong>Venue:</strong> ${escapeHtml(releasedPairing.room_label || 'TBD')}</div>
+        <div class="portal-round-summary">
+          <div>
+            <span>Round</span>
+            <strong>${escapeHtml(releasedPairing.rounds?.name || 'Round')}</strong>
+          </div>
+          <div>
+            <span>Venue</span>
+            <strong>${escapeHtml(releasedPairing.room_label || 'TBD')}</strong>
+          </div>
+        </div>
         <div class="portal-team-grid">
           ${['OG', 'OO', 'CG', 'CO'].map(pos => {
             const teamId = releasedPairing[`${pos.toLowerCase()}_team_id`];
@@ -389,30 +456,43 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap) {
 function renderRegistrationPanel(role, profile, personName) {
   if (role === 'judge') {
     return `
-      <section class="portal-panel">
-        <h2>Registration (${escapeHtml(personName)})</h2>
+      <section id="portal-registration" class="portal-panel">
+        <div class="portal-panel-head">
+          <div>
+            <span>Profile</span>
+            <h2>Registration</h2>
+          </div>
+          <div class="portal-status-pill is-success">Approved</div>
+        </div>
         <div class="portal-panel-body portal-registration-rows">
-          <div><strong>Name:</strong> ${escapeHtml(profile.name || 'Not provided')}</div>
-          <div><strong>Email:</strong> ${escapeHtml(profile.email || 'Not provided')}</div>
-          <div><strong>Role:</strong> Adjudicator${profile.is_trainee ? ' / Trainee' : ''}</div>
-          <div class="portal-muted-band"><strong>Institution:</strong> ${escapeHtml(profile.institution || 'Independent')}</div>
+          <div><span>Name</span><strong>${escapeHtml(profile.name || 'Not provided')}</strong></div>
+          <div><span>Email</span><strong>${escapeHtml(profile.email || 'Not provided')}</strong></div>
+          <div><span>Role</span><strong>Adjudicator${profile.is_trainee ? ' / Trainee' : ''}</strong></div>
+          <div><span>Institution</span><strong>${escapeHtml(profile.institution || 'Independent')}</strong></div>
         </div>
       </section>
     `;
   }
 
   return `
-    <section class="portal-panel">
-      <h2>Registration (${escapeHtml(personName)})</h2>
-      <div class="portal-panel-body portal-registration-rows">
-        <div><strong>Team name:</strong> ${escapeHtml(profile.name || 'Not provided')}</div>
-        ${profile.emoji ? `<div><strong>Emoji:</strong> ${escapeHtml(profile.emoji)}</div>` : ''}
-        <div><strong>Speakers:</strong> ${escapeHtml(getTeamSpeakers(profile))}</div>
+    <section id="portal-registration" class="portal-panel">
+      <div class="portal-panel-head">
         <div>
-          <strong>Eligible for break categories:</strong> ${escapeHtml(getBreakCategory(profile))}<br>
-          <strong>Speaker categories:</strong> ${escapeHtml(getSpeakerCategory(profile, personName))}
+          <span>Profile</span>
+          <h2>Registration</h2>
         </div>
-        <div class="portal-muted-band"><strong>Institution:</strong> ${escapeHtml(profile.institution || 'Unaffiliated')}</div>
+        <div class="portal-status-pill is-success">Approved</div>
+      </div>
+      <div class="portal-panel-body portal-registration-rows">
+        <div><span>Team name</span><strong>${escapeHtml(profile.name || 'Not provided')}</strong></div>
+        ${profile.emoji ? `<div><span>Emoji</span><strong>${escapeHtml(profile.emoji)}</strong></div>` : ''}
+        <div><span>Speakers</span><strong>${escapeHtml(getTeamSpeakers(profile))}</strong></div>
+        <div>
+          <span>Categories</span>
+          <strong>${escapeHtml(getBreakCategory(profile))}</strong>
+          <small>Speaker category: ${escapeHtml(getSpeakerCategory(profile, personName))}</small>
+        </div>
+        <div><span>Institution</span><strong>${escapeHtml(profile.institution || 'Unaffiliated')}</strong></div>
       </div>
     </section>
   `;
@@ -424,15 +504,21 @@ function renderMotionsPanel(rounds) {
     .sort((a, b) => (b.round_num || 0) - (a.round_num || 0));
 
   return `
-    <section class="portal-panel">
-      <h2>Motions</h2>
+    <section id="portal-motions" class="portal-panel">
+      <div class="portal-panel-head">
+        <div>
+          <span>Released content</span>
+          <h2>Motions</h2>
+        </div>
+      </div>
       <div class="portal-panel-body">
         ${releasedMotions.length === 0 ? `
-          <em>No motions have been released yet.</em>
+          <p class="portal-empty">No motions have been released yet.</p>
         ` : releasedMotions.map(round => `
-          <div style="border-bottom:1px solid #e5e7eb; padding:10px 0;">
-            <strong>Round ${escapeHtml(round.round_num || '')}:</strong> ${escapeHtml(round.motion_text)}
-            ${round.motion_info ? `<div style="color:#64748b; margin-top:4px;">${escapeHtml(round.motion_info)}</div>` : ''}
+          <div class="portal-motion-item">
+            <span>Round ${escapeHtml(round.round_num || '')}</span>
+            <strong>${escapeHtml(round.motion_text)}</strong>
+            ${round.motion_info ? `<p>${escapeHtml(round.motion_info)}</p>` : ''}
           </div>
         `).join('')}
       </div>
@@ -467,6 +553,78 @@ export async function renderPrivatePortal(container, role, id) {
     if (pairing) showBallotModal(pairing, () => renderPrivatePortal(container, safeRole, id));
   };
 
+  window.tcPortalToast = (message) => {
+    const existing = document.getElementById('portal-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.id = 'portal-toast';
+    toast.textContent = message;
+    toast.className = 'portal-toast';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2600);
+  };
+
+  window.tcPortalScrollTo = (targetId) => {
+    document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  window.tcPortalCopyUrl = () => {
+    navigator.clipboard.writeText(getPortalUrl()).then(
+      () => window.tcPortalToast('Private URL copied.'),
+      () => alert(getPortalUrl())
+    );
+  };
+
+  window.tcPortalRequestNotifications = async () => {
+    if (!('Notification' in window)) {
+      alert('This browser does not support push notifications.');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      window.tcPortalToast('Notifications are already enabled.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    window.tcPortalToast(permission === 'granted' ? 'Notifications enabled.' : 'Notifications were not enabled.');
+  };
+
+  window.tcPortalCheckIn = () => {
+    localStorage.setItem(getCheckInKey(safeRole, id, tournamentId), 'yes');
+    window.tcPortalToast('Check-in recorded.');
+    renderPrivatePortal(container, safeRole, id);
+  };
+
+  window.tcPortalShowBarcode = () => {
+    const modalRoot = document.getElementById('modal-root');
+    const portalUrl = getPortalUrl();
+    modalRoot.innerHTML = `
+      <div class="portal-modal-backdrop">
+        <div class="portal-modal">
+          <div class="portal-modal-head">
+            <div>
+              <span>Private check-in code</span>
+              <h3>${escapeHtml(personName)}</h3>
+            </div>
+            <button type="button" onclick="document.getElementById('modal-root').innerHTML=''">${icon('x', 20)}</button>
+          </div>
+          <div class="portal-barcode" aria-label="Private URL barcode"></div>
+          <div class="portal-modal-url">${escapeHtml(portalUrl)}</div>
+          <div class="portal-modal-actions">
+            <button class="portal-button" type="button" onclick="window.tcPortalCopyUrl()">${icon('copy', 16)} Copy URL</button>
+            <button class="portal-button is-secondary" type="button" onclick="document.getElementById('modal-root').innerHTML=''">Done</button>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  window.tcPortalFindInPage = (event) => {
+    event.preventDefault();
+    const query = new FormData(event.target).get('query');
+    if (!query) return;
+    window.find(String(query));
+  };
+
   window.tcPortalSubmitFeedback = async (event) => {
     event.preventDefault();
     const formData = new FormData(event.target);
@@ -490,57 +648,121 @@ export async function renderPrivatePortal(container, role, id) {
 
   container.className = '';
   container.innerHTML = `
-    <div style="min-height:100vh; background:#f3f6f9; color:#111827; font-family:Inter, Arial, sans-serif;">
+    <div class="portal-shell">
       <style>
-        .portal-nav { height:56px; display:flex; align-items:center; gap:24px; padding:0 22px; background:#fff; border-bottom:1px solid #dde2e8; position:sticky; top:0; z-index:5; }
-        .portal-brand { display:flex; align-items:center; gap:8px; font-size:21px; color:#111827; white-space:nowrap; }
-        .portal-brand-mark { width:38px; height:38px; border-radius:50%; background:#6f42c1; color:white; display:flex; align-items:center; justify-content:center; }
-        .portal-links { display:flex; align-items:center; gap:20px; color:#68707c; font-size:19px; flex:1; overflow:hidden; white-space:nowrap; }
-        .portal-login { color:#7b635d; font-size:19px; }
-        .portal-page { padding:22px 20px 48px; }
-        .portal-title { font-size:40px; line-height:1.15; margin:0 0 20px; font-weight:800; color:#0b1118; }
-        .portal-title span { color:#7d8a99; font-weight:500; }
-        .portal-warning { display:flex; gap:18px; align-items:flex-start; color:#ff4b14; border:1px solid #ff4b14; background:#fff; border-radius:5px; padding:16px 24px; font-size:20px; line-height:1.35; margin-bottom:20px; }
-        .portal-action-list { background:#fff; border:1px solid #d9dde3; border-radius:5px; overflow:hidden; margin-bottom:20px; }
-        .portal-action-row { min-height:58px; width:100%; border:0; border-bottom:1px solid #d9dde3; background:#fff; color:#673ab7; display:flex; align-items:center; justify-content:space-between; padding:0 28px; font-size:20px; cursor:pointer; text-align:left; }
-        .portal-action-row span { display:flex; align-items:center; gap:16px; }
-        .portal-action-row:last-child { border-bottom:0; }
-        .portal-action-row--notice { color:#ff4b14; cursor:default; justify-content:flex-start; }
-        .portal-grid { display:grid; grid-template-columns:1fr 1fr; gap:36px; align-items:start; }
-        .portal-panel { background:#fff; border:1px solid #d9dde3; border-radius:5px; overflow:hidden; margin-bottom:28px; }
-        .portal-panel h2 { margin:0; padding:14px 26px; font-size:30px; line-height:1.25; color:#0b1118; border-bottom:1px solid #d9dde3; }
-        .portal-panel-body { padding:18px 26px; font-size:22px; line-height:1.32; min-height:54px; }
+        .portal-shell { min-height:100vh; background:#f4f7fb; color:#172033; font-family:Inter, Arial, sans-serif; }
+        .portal-nav { height:68px; display:flex; align-items:center; gap:22px; padding:0 28px; background:rgba(255,255,255,.92); border-bottom:1px solid #dbe3ee; position:sticky; top:0; z-index:20; backdrop-filter:blur(12px); }
+        .portal-brand { display:flex; align-items:center; gap:10px; min-width:240px; color:#172033; }
+        .portal-brand-mark { width:40px; height:40px; border-radius:8px; background:#0f2b5b; color:white; display:flex; align-items:center; justify-content:center; }
+        .portal-brand strong { display:block; font-size:16px; line-height:1.1; }
+        .portal-brand span { display:block; font-size:12px; color:#64748b; margin-top:2px; }
+        .portal-links { display:flex; align-items:center; gap:6px; flex:1; overflow:auto; white-space:nowrap; }
+        .portal-links button, .portal-copy-link { border:0; background:transparent; color:#526174; border-radius:8px; padding:9px 12px; font-weight:700; cursor:pointer; font-size:13px; }
+        .portal-links button:hover, .portal-copy-link:hover { background:#eef4fb; color:#0f2b5b; }
+        .portal-copy-link { display:flex; align-items:center; gap:8px; border:1px solid #cfdbe8; background:white; color:#0f2b5b; }
+        .portal-page { max-width:1180px; margin:0 auto; padding:28px 24px 48px; }
+        .portal-hero { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:18px; align-items:stretch; background:#0f2b5b; color:white; border-radius:8px; padding:28px; box-shadow:0 18px 36px rgba(15,43,91,.18); }
+        .portal-kicker { color:#9fd5c8; font-size:12px; font-weight:900; text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px; }
+        .portal-hero h1 { margin:0; font-size:36px; line-height:1.08; letter-spacing:0; }
+        .portal-hero-meta { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+        .portal-hero-meta span { display:flex; align-items:center; gap:7px; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.08); border-radius:999px; padding:8px 10px; color:#e5edf7; font-size:13px; font-weight:700; }
+        .portal-hero-aside { background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.16); border-radius:8px; padding:18px; min-width:0; }
+        .portal-url-label { color:#9fd5c8; font-size:11px; font-weight:900; text-transform:uppercase; margin-bottom:8px; }
+        .portal-url-text { color:#e5edf7; font-size:13px; line-height:1.45; word-break:break-all; min-height:58px; }
+        .portal-hero-aside button { margin-top:14px; border:0; border-radius:8px; background:#18a689; color:white; padding:10px 12px; display:flex; align-items:center; gap:8px; font-weight:800; cursor:pointer; }
+        .portal-warning { display:flex; gap:12px; align-items:flex-start; color:#8a3b00; border:1px solid #f2c078; background:#fff8eb; border-radius:8px; padding:14px 16px; font-size:14px; line-height:1.5; margin:18px 0; }
+        .portal-warning svg { flex:0 0 auto; margin-top:1px; }
+        .portal-actions { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; margin-bottom:18px; }
+        .portal-action-card { min-height:126px; border:1px solid #dbe3ee; background:white; border-radius:8px; padding:16px; text-align:left; display:flex; flex-direction:column; gap:8px; cursor:pointer; box-shadow:0 8px 18px rgba(15,43,91,.06); transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+        .portal-action-card:hover { transform:translateY(-2px); box-shadow:0 14px 26px rgba(15,43,91,.1); border-color:#b8c8da; }
+        .portal-action-card:disabled, .portal-action-card.is-disabled { cursor:not-allowed; opacity:.72; transform:none; box-shadow:none; }
+        .portal-action-card--primary { background:#0f2b5b; color:white; border-color:#0f2b5b; }
+        .portal-action-card.is-success { border-color:#a6dbc5; background:#f0fbf6; }
+        .portal-action-icon { width:36px; height:36px; border-radius:8px; background:#eef4fb; color:#0f2b5b; display:flex; align-items:center; justify-content:center; }
+        .portal-action-card--primary .portal-action-icon { background:rgba(255,255,255,.12); color:white; }
+        .portal-action-card strong { color:#172033; font-size:15px; }
+        .portal-action-card--primary strong { color:white; }
+        .portal-action-card small { color:#64748b; line-height:1.45; font-size:12px; }
+        .portal-action-card--primary small { color:#cbd8e8; }
+        .portal-grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr); gap:18px; align-items:start; }
+        .portal-panel, .portal-card { background:white; border:1px solid #dbe3ee; border-radius:8px; overflow:hidden; margin-bottom:18px; box-shadow:0 8px 18px rgba(15,43,91,.05); scroll-margin-top:88px; }
+        .portal-panel-head { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:18px 20px; border-bottom:1px solid #edf1f6; }
+        .portal-panel-head span { display:block; color:#64748b; font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:.07em; margin-bottom:4px; }
+        .portal-panel h2 { margin:0; color:#172033; font-size:22px; line-height:1.2; letter-spacing:0; }
+        .portal-panel-body { padding:18px 20px; font-size:15px; line-height:1.55; }
+        .portal-empty { margin:0; color:#64748b; font-style:normal; }
+        .portal-status-pill { border-radius:999px; padding:7px 10px; background:#e8f7f1; color:#047857; font-size:12px; font-weight:900; white-space:nowrap; }
+        .portal-status-pill.is-muted { background:#eef2f7; color:#64748b; }
+        .portal-status-pill.is-success { background:#e8f7f1; color:#047857; }
+        .portal-round-summary { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+        .portal-round-summary div { border:1px solid #edf1f6; background:#f8fafc; border-radius:8px; padding:12px; }
+        .portal-round-summary span { display:block; color:#64748b; font-size:11px; font-weight:900; text-transform:uppercase; margin-bottom:4px; }
+        .portal-round-summary strong { font-size:16px; color:#172033; }
+        .portal-team-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-top:12px; font-size:13px; }
+        .portal-team-grid div { border:1px solid #dbe3ee; border-radius:8px; padding:10px; background:#fff; min-height:54px; }
+        .portal-team-grid div.active { border-color:#0f2b5b; background:#eef4fb; }
+        .portal-link-button, .portal-button { border:0; background:#0f2b5b; color:white; border-radius:8px; padding:10px 14px; font-weight:800; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:8px; text-decoration:none; font-size:13px; }
+        .portal-button:hover, .portal-link-button:hover { background:#12366f; }
+        .portal-button.is-secondary { background:#eef2f7; color:#172033; }
+        .portal-card { padding:18px; }
+        .portal-card__heading { display:flex; align-items:center; gap:9px; color:#172033; font-weight:900; font-size:16px; }
+        .portal-muted { color:#64748b; line-height:1.55; margin:10px 0 0; font-size:14px; }
+        .portal-form { display:grid; gap:12px; margin-top:14px; }
+        .portal-form label { display:grid; gap:6px; color:#526174; font-size:12px; font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
+        .portal-input { width:100%; border:1px solid #cfdbe8; border-radius:8px; padding:11px 12px; font-size:14px; font-family:inherit; box-sizing:border-box; color:#172033; }
+        .portal-input:focus { outline:2px solid rgba(24,166,137,.18); border-color:#18a689; }
         .portal-registration-rows { padding:0; }
-        .portal-registration-rows > div { padding:14px 26px; border-bottom:1px solid #d9dde3; }
+        .portal-registration-rows > div { display:grid; grid-template-columns:120px minmax(0,1fr); gap:12px; padding:14px 20px; border-bottom:1px solid #edf1f6; align-items:start; }
         .portal-registration-rows > div:last-child { border-bottom:0; }
-        .portal-muted-band { background:#d7dbe0; color:#8290a0; }
-        .portal-round-line { display:flex; justify-content:space-between; gap:16px; }
-        .portal-team-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-top:14px; font-size:14px; }
-        .portal-team-grid div { border:1px solid #d9dde3; border-radius:4px; padding:8px; background:#fff; }
-        .portal-team-grid div.active { border-color:#673ab7; background:#f5f0ff; }
-        .portal-link-button { border:0; background:#673ab7; color:white; border-radius:4px; padding:9px 14px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; text-decoration:none; font-size:14px; margin-top:14px; }
-        .portal-input { width:100%; border:1px solid #cbd5e1; border-radius:4px; padding:10px 12px; font-size:16px; font-family:inherit; box-sizing:border-box; }
-        .portal-card { background:white; border:1px solid #d9dde3; border-radius:5px; padding:20px; margin-bottom:16px; }
-        .portal-card__heading { display:flex; align-items:center; gap:8px; color:#111827; font-weight:800; font-size:18px; }
-        .portal-muted { color:#64748b; line-height:1.6; margin:12px 0 0; }
-        .portal-button { border:0; background:#673ab7; color:white; border-radius:4px; padding:10px 14px; font-weight:800; cursor:pointer; display:inline-flex; align-items:center; gap:8px; text-decoration:none; font-size:13px; }
-        .portal-search-row { display:flex; gap:10px; margin-top:2px; }
-        .portal-search-row input { flex:1; border:1px solid #cbd5e1; border-radius:4px; padding:13px 26px; font-size:20px; }
-        .portal-search-row button { width:52px; border:1px solid #cbd5e1; background:#e5e9ee; border-radius:4px; color:#374151; }
+        .portal-registration-rows span { color:#64748b; font-size:12px; font-weight:900; text-transform:uppercase; }
+        .portal-registration-rows strong { color:#172033; font-size:14px; word-break:break-word; }
+        .portal-registration-rows small { display:block; color:#64748b; margin-top:3px; font-size:12px; }
+        .portal-motion-item { border:1px solid #edf1f6; border-radius:8px; padding:14px; margin-bottom:10px; }
+        .portal-motion-item span { color:#64748b; font-size:11px; font-weight:900; text-transform:uppercase; }
+        .portal-motion-item strong { display:block; margin-top:6px; color:#172033; font-size:16px; }
+        .portal-motion-item p { color:#64748b; margin:8px 0 0; }
+        .portal-inline-task { display:flex; justify-content:space-between; gap:14px; align-items:center; border:1px solid #edf1f6; background:#f8fafc; border-radius:8px; padding:14px; margin-top:12px; }
+        .portal-inline-task strong { display:block; color:#172033; }
+        .portal-inline-task span { display:block; color:#64748b; font-size:13px; margin-top:3px; }
+        .portal-search-row { display:flex; gap:10px; margin-top:6px; background:white; border:1px solid #dbe3ee; border-radius:8px; padding:10px; }
+        .portal-search-row input { flex:1; min-width:0; border:0; background:#f8fafc; border-radius:8px; padding:12px 14px; font-size:14px; }
+        .portal-search-row button { width:44px; border:0; background:#eef4fb; border-radius:8px; color:#0f2b5b; cursor:pointer; }
+        .portal-toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#172033; color:white; padding:12px 16px; border-radius:8px; box-shadow:0 12px 24px rgba(0,0,0,.18); z-index:10000; font-weight:800; font-size:13px; }
+        .portal-modal-backdrop { position:fixed; inset:0; background:rgba(15,32,51,.48); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; padding:24px; z-index:9999; }
+        .portal-modal { width:min(520px, 100%); background:white; border-radius:8px; overflow:hidden; box-shadow:0 24px 54px rgba(15,32,51,.25); }
+        .portal-modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 20px; border-bottom:1px solid #edf1f6; }
+        .portal-modal-head span { color:#64748b; font-size:11px; font-weight:900; text-transform:uppercase; }
+        .portal-modal-head h3 { margin:3px 0 0; color:#172033; font-size:20px; }
+        .portal-modal-head button { border:0; background:transparent; color:#64748b; cursor:pointer; }
+        .portal-barcode { height:112px; margin:22px; border-radius:8px; border:1px solid #dbe3ee; background:repeating-linear-gradient(90deg,#172033 0 3px,#fff 3px 7px,#172033 7px 9px,#fff 9px 15px,#172033 15px 20px,#fff 20px 24px); }
+        .portal-modal-url { margin:0 22px 18px; padding:12px; border-radius:8px; background:#f8fafc; color:#526174; font-size:13px; line-height:1.45; word-break:break-all; }
+        .portal-modal-actions { display:flex; gap:10px; padding:0 22px 22px; }
         @media (max-width: 900px) {
+          .portal-nav { padding:0 16px; }
+          .portal-brand { min-width:auto; }
           .portal-links { display:none; }
-          .portal-grid { grid-template-columns:1fr; gap:16px; }
-          .portal-title { font-size:30px; }
-          .portal-warning, .portal-action-row, .portal-panel-body { font-size:16px; }
-          .portal-panel h2 { font-size:24px; }
+          .portal-page { padding:18px 14px 36px; }
+          .portal-hero { grid-template-columns:1fr; padding:20px; }
+          .portal-hero h1 { font-size:28px; }
+          .portal-actions { grid-template-columns:1fr 1fr; }
+          .portal-grid { grid-template-columns:1fr; gap:0; }
           .portal-team-grid { grid-template-columns:1fr 1fr; }
+          .portal-registration-rows > div { grid-template-columns:1fr; gap:4px; }
+          .portal-round-summary { grid-template-columns:1fr; }
+          .portal-inline-task { align-items:stretch; flex-direction:column; }
+        }
+        @media (max-width: 560px) {
+          .portal-actions { grid-template-columns:1fr; }
+          .portal-copy-link { display:none; }
+          .portal-hero-meta span { width:100%; }
+          .portal-search-row { display:none; }
         }
       </style>
       ${renderPortalNav(tournament)}
       <main class="portal-page">
-        <h1 class="portal-title">Private URL <span>for ${escapeHtml(personName)}${safeRole === 'team' ? ` (${escapeHtml(profile.name || 'Team')})` : ''}</span></h1>
+        ${renderHero(safeRole, profile, personName, tournament, pairings)}
         ${renderWarning(personName)}
-        ${renderActionRows(safeRole, tournament, pairings)}
+        ${renderActionRows(safeRole, profile.id, tournament, pairings)}
         <div class="portal-grid">
           <div>
             ${renderInThisRoundPanel(safeRole, profile, pairings, teamMap)}
@@ -553,11 +775,11 @@ export async function renderPrivatePortal(container, role, id) {
             ${renderCheckInCard(tournament)}
           </div>
         </div>
-        <div class="portal-search-row">
-          <input type="text" placeholder="Find in Table" aria-label="Find in Table">
-          <button type="button">${icon('search', 22)}</button>
-          <button type="button">${icon('clipboard', 22)}</button>
-        </div>
+        <form class="portal-search-row" onsubmit="window.tcPortalFindInPage(event)">
+          <input name="query" type="text" placeholder="Find on this page" aria-label="Find on this page">
+          <button type="submit" title="Find">${icon('search', 20)}</button>
+          <button type="button" title="Copy private URL" onclick="window.tcPortalCopyUrl()">${icon('clipboard', 20)}</button>
+        </form>
       </main>
     </div>
   `;
