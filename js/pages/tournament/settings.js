@@ -6,9 +6,23 @@ import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 export async function renderSettings(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
+  let backendHealth = null;
+
+  const fetchBackendHealth = async () => {
+    try {
+      const response = await fetch('/api/portal-health');
+      const data = await response.json().catch(() => ({}));
+      backendHealth = { ...data, ok: response.ok && data.ok };
+    } catch (error) {
+      backendHealth = { ok: false, error: 'Portal backend health route is unavailable in this environment.' };
+    }
+  };
 
   const fetchSettings = async () => {
-    const { data } = await supabase.from('tournaments').select('*').eq('id', tournamentId).single();
+    const [{ data }] = await Promise.all([
+      supabase.from('tournaments').select('*').eq('id', tournamentId).single(),
+      fetchBackendHealth()
+    ]);
     renderUI(data || {});
   };
 
@@ -57,6 +71,8 @@ export async function renderSettings(container) {
 
   const renderUI = (t) => {
     const status = (t.status || 'draft').toLowerCase();
+    const healthRows = backendHealth?.tables || [];
+    const envReady = backendHealth?.env ? Object.values(backendHealth.env).every(Boolean) : false;
     
     const content = `
       <div style="display:grid; grid-template-columns:1fr 340px; gap:24px; align-items:start;">
@@ -109,6 +125,31 @@ export async function renderSettings(container) {
         </div>
 
         <div style="display:flex; flex-direction:column; gap:24px;">
+          <!-- PORTAL BACKEND -->
+          <div class="card" style="padding:24px; border-color:${backendHealth?.ok ? '#bbf7d0' : '#fed7aa'};">
+             <h4 style="font-weight:700; font-size:13px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">Portal backend</h4>
+             <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+               <span class="badge ${backendHealth?.ok ? 'badge--active' : 'badge--draft'}">${backendHealth?.ok ? 'READY' : 'CHECK'}</span>
+               <span style="font-size:12px; color:#64748b;">Private portal APIs, check-in, QR, feedback, ballots, and push.</span>
+             </div>
+             <div style="display:grid; gap:8px; font-size:12px;">
+               <div style="display:flex; justify-content:space-between; gap:12px;">
+                 <span style="color:#64748b;">Server env vars</span>
+                 <strong style="color:${envReady ? '#059669' : '#d97706'};">${envReady ? 'Ready' : 'Incomplete'}</strong>
+               </div>
+               <div style="display:flex; justify-content:space-between; gap:12px;">
+                 <span style="color:#64748b;">Supabase tables</span>
+                 <strong style="color:${healthRows.every(row => row.ok) ? '#059669' : '#d97706'};">${healthRows.filter(row => row.ok).length}/${healthRows.length || 7}</strong>
+               </div>
+             </div>
+             ${backendHealth?.error ? `<p style="font-size:12px; color:#d97706; line-height:1.5; margin:12px 0 0;">${backendHealth.error}</p>` : ''}
+             ${healthRows.some(row => !row.ok) ? `
+               <div style="margin-top:12px; display:grid; gap:6px;">
+                 ${healthRows.filter(row => !row.ok).map(row => `<div style="font-size:12px; color:#b45309;">Missing or blocked: ${row.table}</div>`).join('')}
+               </div>
+             ` : ''}
+          </div>
+
           <!-- STATUS SECTION -->
           <div class="card" style="padding:24px;">
              <h4 style="font-weight:700; font-size:13px; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">Tournament Status</h4>
