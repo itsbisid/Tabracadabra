@@ -29,6 +29,18 @@ async function createTournamentRecord(tournament) {
   return { data: null, error: lastError };
 }
 
+async function createOwnerMembership(tournamentId, userId) {
+  if (!tournamentId || !userId) return;
+
+  await supabase
+    .from('tournament_memberships')
+    .upsert({
+      tournament_id: tournamentId,
+      user_id: userId,
+      role: 'Director'
+    }, { onConflict: 'tournament_id,user_id' });
+}
+
 export async function renderCreateTournament(container) {
   const content = `
     <div style="max-width: 900px; margin: 0 auto;">
@@ -463,6 +475,7 @@ export async function renderCreateTournament(container) {
       btn.disabled = false;
       btn.innerHTML = originalText;
     } else {
+      await createOwnerMembership(data?.id, session.user.id);
       setActiveTournamentId(data?.id);
       window.tcNavigate('/tournament/dashboard');
     }

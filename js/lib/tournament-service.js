@@ -18,6 +18,22 @@ async function fetchAllTournamentRows() {
     .select('*');
 }
 
+async function fetchOwnedTournamentRows(userId) {
+  const owned = await supabase
+    .from('tournaments')
+    .select('*')
+    .or(`owner_id.eq.${userId},owner_id.is.null`)
+    .order('created_at', { ascending: false });
+
+  if (!owned.error) return owned;
+
+  return supabase
+    .from('tournaments')
+    .select('*')
+    .eq('owner_id', userId)
+    .order('created_at', { ascending: false });
+}
+
 async function fetchMembershipRows(userId) {
   const primary = await supabase
     .from('tournament_memberships')
@@ -33,11 +49,7 @@ async function fetchMembershipRows(userId) {
 }
 
 export async function fetchUserTournaments(userId) {
-  const { data: owned, error: ownedError } = await supabase
-    .from('tournaments')
-    .select('*')
-    .eq('owner_id', userId)
-    .order('created_at', { ascending: false });
+  const { data: owned, error: ownedError } = await fetchOwnedTournamentRows(userId);
 
   const { data: memberships, error: membershipError } = await fetchMembershipRows(userId);
   if (isMissingSchemaObject(ownedError) && isMissingSchemaObject(membershipError)) {
@@ -53,7 +65,10 @@ export async function fetchUserTournaments(userId) {
   const membershipRows = Array.isArray(memberships) ? memberships : [];
 
   ownedRows.forEach((tournament) => {
-    byId.set(tournament.id, { ...tournament, userRole: 'Director' });
+    byId.set(tournament.id, {
+      ...tournament,
+      userRole: tournament.owner_id ? 'Director' : 'Unclaimed director'
+    });
   });
 
   membershipRows.forEach((membership) => {
