@@ -112,6 +112,12 @@ export function createPortalToken({ role, id, tournamentId }) {
   return `${payload}.${signPayload(payload)}`;
 }
 
+function getTokenMaxAgeMs() {
+  const days = Number(env('PORTAL_TOKEN_TTL_DAYS'));
+  const effectiveDays = Number.isFinite(days) && days > 0 ? days : 3;
+  return effectiveDays * 24 * 60 * 60 * 1000;
+}
+
 export function verifyPortalToken(token) {
   if (!token || typeof token !== 'string' || !token.includes('.')) {
     throw new Error('A valid portal token is required.');
@@ -129,6 +135,12 @@ export function verifyPortalToken(token) {
   if (!data.id || !data.tournamentId || !['judge', 'team'].includes(data.role)) {
     throw new Error('Portal token payload is invalid.');
   }
+
+  const issuedAt = Number(data.issuedAt);
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > getTokenMaxAgeMs()) {
+    throw new Error('This portal link has expired. Reopen your private portal to refresh it.');
+  }
+
   return data;
 }
 

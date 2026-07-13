@@ -39,10 +39,13 @@ export default async function handler(request, response) {
     await validateTokenProfile(tokenData);
     if (tokenData.role !== 'judge') throw new Error('Only an adjudicator can submit a ballot.');
 
-    const { pairing, round, allocations } = await fetchPairingBundle(payload.pairingId);
+    const { pairing, round, ballots: existingBallots, allocations } = await fetchPairingBundle(payload.pairingId);
     const judgeRole = assertCanAccessPairing({ tokenData, pairing, allocations });
     if (judgeRole !== 'CHAIR') throw new Error('Only the chair for this room can submit the ballot.');
     if (round?.status !== 'Released') throw new Error('Ballots can only be submitted after the draw is released.');
+    if ((existingBallots || []).some(ballot => ballot.status === 'LOCKED')) {
+      throw new Error('A confirmed ballot already exists for this room. Ask the tab room to unlock it before resubmitting.');
+    }
 
     validateBallotRows(pairing, payload.ballots);
     const ballots = payload.ballots.map(row => {

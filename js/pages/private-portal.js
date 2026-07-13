@@ -566,7 +566,7 @@ function renderHero(role, profile, personName, tournament, pairings, blockInfo) 
   `;
 }
 
-function getOpenBallots(role, pairings) {
+function getOpenBallots(role, id, pairings) {
   if (role !== 'judge') return [];
 
   return pairings.filter(pairing => {
@@ -632,7 +632,7 @@ function getNotificationCopy(status = {}) {
 
 function renderActionRows(role, id, tournament, pairings, notificationStatus, checkInStatus, blockInfo) {
   const onlineCheckIn = Boolean(tournament?.settings?.online_check_in || tournament?.settings?.onlineCheckIn || tournament?.settings?.check_in_enabled);
-  const openBallots = blockInfo?.blocked ? [] : getOpenBallots(role, pairings);
+  const openBallots = blockInfo?.blocked ? [] : getOpenBallots(role, id, pairings);
   const checkedIn = Boolean(checkInStatus?.checkedIn);
   const notification = getNotificationCopy(notificationStatus);
   const notificationDisabled = ['denied', 'unsupported'].includes(notificationStatus?.state);

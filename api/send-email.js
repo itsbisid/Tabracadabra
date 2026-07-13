@@ -1,7 +1,11 @@
 import { hasEmailTransportConfig, sendMailToEach } from './email-transport.js';
 
 const MAX_RECIPIENTS = 5;
-const ADMIN_ROLES = new Set(['TAB_DIRECTOR', 'CONVENOR']);
+const ADMIN_ROLES = new Set(['TAB_DIRECTOR', 'CONVENOR', 'DIRECTOR', 'DEPUTY_CONVENOR']);
+
+function isAdminRole(role) {
+  return ADMIN_ROLES.has(String(role || '').trim().toUpperCase());
+}
 
 function sendJson(response, status, payload) {
   response.statusCode = status;
@@ -211,7 +215,7 @@ async function canAdministerTournament({ token, user }, tournamentId) {
   const membershipBody = await membershipResponse.json().catch(() => null);
   const memberships = membershipResponse.ok ? membershipBody : [];
 
-  if (memberships.some(membership => ADMIN_ROLES.has(membership.role))) return true;
+  if (memberships.some(membership => isAdminRole(membership.role))) return true;
 
   if (isMissingSchemaObject(tournamentBody) && isMissingSchemaObject(membershipBody)) {
     const fallbackUrl = `${supabaseUrl}/rest/v1/tournaments?id=eq.${encodeURIComponent(tournamentId)}&select=id`;

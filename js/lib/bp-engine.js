@@ -19,15 +19,19 @@ export const BPEngine = {
    */
   generateDraw: async (roundId, tournamentId, roundNum, targetPanelSize = 3) => {
     // 1. Fetch Data
-    const { data: teams, error: teamError } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
+    const { data: allTeams, error: teamError } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
     const { data: judges, error: judgeError } = await supabase.from('adjudicators').select('*').eq('tournament_id', tournamentId).eq('status', 'Active');
     const { data: prevPairings, error: pairingError } = await supabase.from('draw_pairings').select('*').eq('tournament_id', tournamentId);
     if (teamError) throw teamError;
     if (judgeError) throw judgeError;
     if (pairingError) throw pairingError;
-    
-    if (!teams || teams.length < 4) throw new Error('Need at least 4 teams to generate a BP draw.');
-    if (teams.length % 4 !== 0) throw new Error('BP draws need a team count divisible by 4. Add swing teams or deactivate extras before generating pairings.');
+
+    // Only active teams enter the draw. Teams created via registration/CSV/manual entry
+    // may have a null status, so exclude only those explicitly marked Inactive.
+    const teams = (allTeams || []).filter(team => (team.status || 'Active') !== 'Inactive');
+
+    if (teams.length < 4) throw new Error('Need at least 4 active teams to generate a BP draw.');
+    if (teams.length % 4 !== 0) throw new Error('BP draws need an active team count divisible by 4. Add swing teams or deactivate extras before generating pairings.');
 
     // 2. Step 1: Sorting Teams (The Ladder)
     let sortedTeams = [];

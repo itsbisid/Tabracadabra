@@ -1,5 +1,9 @@
 const PUSH_TABLE = 'push_subscriptions';
-const ADMIN_ROLES = new Set(['TAB_DIRECTOR', 'CONVENOR']);
+const ADMIN_ROLES = new Set(['TAB_DIRECTOR', 'CONVENOR', 'DIRECTOR', 'DEPUTY_CONVENOR']);
+
+function isAdminRole(role) {
+  return ADMIN_ROLES.has(String(role || '').trim().toUpperCase());
+}
 
 export function sendJson(response, status, payload) {
   response.statusCode = status;
@@ -164,5 +168,5 @@ export async function canAdministerTournament({ token, user }, tournamentId) {
   const membershipResponse = await fetch(membershipUrl, { headers });
   const memberships = membershipResponse.ok ? await membershipResponse.json() : [];
 
-  return memberships.some(membership => ADMIN_ROLES.has(membership.role));
+  return memberships.some(membership => isAdminRole(membership.role));
 }

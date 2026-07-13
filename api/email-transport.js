@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { claimIdempotencyKey } from './email-idempotency.js';
 
 const RETRY_DELAYS_MS = [600, 1500];
 const ASHESI_DOMAIN = '@ashesi.edu.gh';
@@ -90,6 +91,14 @@ async function sendWithRetry(transporter, message) {
 export async function sendMail({ to, subject, html, text, idempotencyKey }) {
   const recipients = normalizeRecipients(to);
   if (recipients.length === 0) throw new Error('A valid recipient email is required.');
+
+  // Skip the send if this exact key was already sent (retry / double-click).
+  if (idempotencyKey) {
+    const shouldSend = await claimIdempotencyKey(idempotencyKey);
+    if (!shouldSend) {
+      return { id: null, provider: 'skipped', accepted: recipients, rejected: [], deduped: true };
+    }
+  }
 
   const {
     host,

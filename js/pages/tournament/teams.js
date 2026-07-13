@@ -69,6 +69,13 @@ export async function renderTeams(container) {
     }
   };
 
+  window.tcToggleTeamActive = async (id, currentStatus) => {
+    const nextStatus = (currentStatus || 'Active') === 'Inactive' ? 'Active' : 'Inactive';
+    const { error } = await supabase.from('teams').update({ status: nextStatus }).eq('id', id);
+    if (error) alert(error.message);
+    else fetchAndRender();
+  };
+
   const fetchAndRender = async () => {
     const { data, error } = await supabase
       .from('teams')
@@ -157,14 +164,16 @@ export async function renderTeams(container) {
                 </td>
                 <td style="padding:16px;">
                   <div style="display:flex; align-items:center; gap:12px;">
-                    <span style="background:#ECFDF5; color:#10B981; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">${status}</span>
+                    ${(team.status || 'Active') === 'Inactive'
+                      ? `<span style="background:#f1f5f9; color:#64748b; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">Inactive</span>`
+                      : `<span style="background:#ECFDF5; color:#10B981; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">${status}</span>`}
                     <button onclick="window.tcShareTeamURL('${teamId}', '${teamNameJs}', '${speaker1NameJs}')" class="btn btn--outline btn--sm" style="font-size:10px; padding:4px 8px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
                       ${icon('link', 12)} URL: S1
                     </button>
                     <button onclick="window.tcShareTeamURL('${teamId}', '${teamNameJs}', '${speaker2NameJs}')" class="btn btn--outline btn--sm" style="font-size:10px; padding:4px 8px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
                       ${icon('link', 12)} URL: S2
                     </button>
-                    <button class="btn btn--outline btn--sm" style="font-size:11px; padding:4px 12px; height:auto; background:white; color:#64748b; border:1px solid #e2e8f0;">Deactivate</button>
+                    <button onclick="window.tcToggleTeamActive('${teamId}', '${escapeJsString(team.status || 'Active')}')" class="btn btn--outline btn--sm" style="font-size:11px; padding:4px 12px; height:auto; background:white; color:#64748b; border:1px solid #e2e8f0;">${(team.status || 'Active') === 'Inactive' ? 'Reactivate' : 'Deactivate'}</button>
                     <button onclick="window.tcDeleteTeam('${teamId}')" style="color:#ef4444; border:none; background:none; cursor:pointer; padding:4px;">
                       ${icon('trash', 16)}
                     </button>

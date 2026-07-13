@@ -29,11 +29,33 @@ export async function getTournamentRole(tournamentId) {
 }
 
 /**
- * Checks if the current user has administrative permissions
+ * Roles that grant administrative permissions. Includes the legacy/display
+ * variants ('Director', 'Convenor') actually written by create-tournament,
+ * matched case-insensitively so both vocabularies are accepted.
+ */
+const ADMIN_ROLE_NAMES = new Set(['tab_director', 'convenor', 'director', 'deputy_convenor']);
+
+function isAdminRole(role) {
+  return ADMIN_ROLE_NAMES.has(String(role || '').trim().toLowerCase());
+}
+
+/**
+ * Checks if the current user has administrative permissions.
+ * The tournament owner is always an admin, regardless of membership role.
  */
 export async function isAdmin(tournamentId) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return false;
+
+  const { data: tournament } = await supabase
+    .from('tournaments')
+    .select('owner_id')
+    .eq('id', tournamentId)
+    .single();
+  if (tournament?.owner_id && tournament.owner_id === session.user.id) return true;
+
   const role = await getTournamentRole(tournamentId);
-  return role === ROLES.TAB_DIRECTOR || role === ROLES.CONVENOR;
+  return isAdminRole(role);
 }
 
 /**
