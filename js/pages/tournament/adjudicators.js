@@ -113,7 +113,7 @@ export async function renderAdjudicators(container) {
     renderUI(data || []);
   };
 
-  const renderUI = (judges) => {
+  const renderUI = async (judges) => {
     const tableHTML = `
       <div style="background:white; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
         <table style="width:100%; border-collapse:collapse; text-align:left; font-size:14px;">
@@ -204,10 +204,10 @@ export async function renderAdjudicators(container) {
           </form>
         </div>
       </div>
-        <div style="position:relative; width:300px;">
-          <div style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8;">${icon('search', 16)}</div>
-          <input type="text" placeholder="Search adjudicators..." style="width:100%; padding:10px 12px 10px 40px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; outline:none; transition:border 0.2s; focus:border:var(--color-primary);">
-        </div>
+
+      <div style="position:relative; width:300px; margin-bottom:24px;">
+        <div style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8;">${icon('search', 16)}</div>
+        <input type="text" placeholder="Search adjudicators..." style="width:100%; padding:10px 12px 10px 40px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; outline:none; transition:border 0.2s;">
       </div>
 
       ${judges.length === 0 ? `
@@ -219,31 +219,40 @@ export async function renderAdjudicators(container) {
       ` : tableHTML}
     `;
 
-    renderAppLayout(container, '/tournament/adjudicators', 'Adjudicators', 'Manage adjudicators participating in this tournament', content);
-  };
+    await renderAppLayout(container, '/tournament/adjudicators', 'Adjudicators', 'Manage adjudicators participating in this tournament', content);
 
-  fetchAndRender();
-
-  // Wire manual form
-  setTimeout(() => {
+    // Wire the manual-entry form after every render. (The old setTimeout(100)
+    // raced the async data fetch and usually left the form unwired, so
+    // "Save Adjudicator" silently did nothing.)
     const form = document.getElementById('manual-adj-form');
     if (form) {
       form.onsubmit = async (e) => {
         e.preventDefault();
+        const saveBtn = form.querySelector('button[type="submit"]');
         const fd = new FormData(form);
+        const name = String(fd.get('name') || '').trim();
+        if (!name) { alert("Please enter the adjudicator's full name."); return; }
+
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
         const { error } = await supabase.from('adjudicators').insert({
           tournament_id: tournamentId,
-          name: fd.get('name'),
-          email: fd.get('email'),
-          institution: fd.get('institution'),
+          name,
+          email: String(fd.get('email') || '').trim() || null,
+          institution: String(fd.get('institution') || '').trim() || null,
           status: 'Active'
         });
-        if (error) alert(error.message);
-        else {
+
+        if (error) {
+          alert('Could not add adjudicator: ' + error.message);
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Adjudicator'; }
+        } else {
           document.getElementById('add-adj-modal').style.display = 'none';
+          form.reset();
           fetchAndRender();
         }
       };
     }
-  }, 100);
+  };
+
+  fetchAndRender();
 }

@@ -90,7 +90,7 @@ export async function renderTeams(container) {
     renderUI(data || []);
   };
 
-  const renderUI = (teams) => {
+  const renderUI = async (teams) => {
     const tableHTML = `
       <div style="background:white; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
         <table style="width:100%; border-collapse:collapse; text-align:left; font-size:14px;">
@@ -227,27 +227,33 @@ export async function renderTeams(container) {
       ` : tableHTML}
     `;
 
-    renderAppLayout(container, '/tournament/teams', 'Teams', 'Manage teams participating in this tournament', content);
-  };
+    await renderAppLayout(container, '/tournament/teams', 'Teams', 'Manage teams participating in this tournament', content);
 
-  fetchAndRender();
-
-  // Wire manual form
-  setTimeout(() => {
+    // Wire the manual-entry form after every render. (The old setTimeout(100)
+    // raced the async data fetch and usually left the form unwired, so
+    // "Save Team" silently did nothing.)
     const form = document.getElementById('manual-team-form');
     if (form) {
       form.onsubmit = async (e) => {
         e.preventDefault();
+        const saveBtn = form.querySelector('button[type="submit"]');
         const fd = new FormData(form);
+        const name = String(fd.get('name') || '').trim();
+        if (!name) { alert('Please enter a team name.'); return; }
+
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
         const { error } = await supabase.from('teams').insert({
           tournament_id: tournamentId,
-          name: fd.get('name'),
-          institution: fd.get('institution'),
-          speaker1_name: fd.get('s1'),
-          speaker2_name: fd.get('s2')
+          name,
+          institution: String(fd.get('institution') || '').trim() || null,
+          speaker1_name: String(fd.get('s1') || '').trim() || null,
+          speaker2_name: String(fd.get('s2') || '').trim() || null,
+          status: 'Active'
         });
+
         if (error) {
-          alert(error.message);
+          alert('Could not add team: ' + error.message);
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Team'; }
         } else {
           document.getElementById('add-team-modal').style.display = 'none';
           form.reset();
@@ -255,5 +261,7 @@ export async function renderTeams(container) {
         }
       };
     }
-  }, 100);
+  };
+
+  fetchAndRender();
 }
