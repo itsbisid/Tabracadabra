@@ -88,6 +88,32 @@ async function sendWithRetry(transporter, message) {
   throw lastError;
 }
 
+function parseAddress(value) {
+  const s = String(value || '').trim();
+  const m = /<([^>]+)>/.exec(s);
+  const email = (m ? m[1] : s).trim();
+  const name = m ? s.slice(0, m.index).replace(/^"|"$/g, '').trim() : '';
+  return { name, email };
+}
+
+// Gmail / Google Workspace SMTP signs mail with the authenticated account's
+// domain (DKIM) and sets the envelope sender to that account (SPF). If the
+// visible `From:` header uses a DIFFERENT domain, DMARC alignment fails and
+// external mail servers (Outlook, Yahoo, Workspace, ...) reject or spam-bin the
+// message — which shows up as "email only reaches Gmail addresses". To stay
+// deliverable everywhere, keep the display name but force the From address to
+// the authenticated user unless it is already on the same domain.
+function alignFrom(configuredFrom, user) {
+  const { name, email } = parseAddress(configuredFrom);
+  const userDomain = (user.split('@')[1] || '').toLowerCase();
+  const fromDomain = (email.split('@')[1] || '').toLowerCase();
+  if (email.toLowerCase() === user.toLowerCase() || (fromDomain && fromDomain === userDomain)) {
+    return configuredFrom;
+  }
+  const display = name || 'TabraCadabra';
+  return `${display} <${user}>`;
+}
+
 export async function sendMail({ to, subject, html, text, idempotencyKey }) {
   const recipients = normalizeRecipients(to);
   if (recipients.length === 0) throw new Error('A valid recipient email is required.');
@@ -123,7 +149,7 @@ export async function sendMail({ to, subject, html, text, idempotencyKey }) {
   });
 
   const info = await sendWithRetry(transporter, {
-    from,
+    from: alignFrom(from, user),
     to: recipients,
     sender: user,
     subject,
