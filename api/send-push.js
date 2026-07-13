@@ -7,7 +7,7 @@ import {
   assertPushConfigured,
   listPushSubscriptions,
   sendJson
-} from './push-utils.js';
+} from '../api-shared/push-utils.js';
 
 export default async function handler(request, response) {
   if (request.method !== 'POST') {

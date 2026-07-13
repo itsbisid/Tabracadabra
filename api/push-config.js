@@ -1,4 +1,4 @@
-import { getPushEnv, sendJson } from './push-utils.js';
+import { getPushEnv, sendJson } from '../api-shared/push-utils.js';
 
 export default async function handler(request, response) {
   if (request.method !== 'GET') {

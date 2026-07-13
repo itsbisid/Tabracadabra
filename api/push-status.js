@@ -1,4 +1,4 @@
-import { collectBody, findPushSubscription, sendJson } from './push-utils.js';
+import { collectBody, findPushSubscription, sendJson } from '../api-shared/push-utils.js';
 
 export default async function handler(request, response) {
   if (request.method !== 'POST') {

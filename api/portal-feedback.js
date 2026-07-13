@@ -7,7 +7,7 @@ import {
   sendJson,
   validateTokenProfile,
   verifyPortalToken
-} from './portal-utils.js';
+} from '../api-shared/portal-utils.js';
 
 export default async function handler(request, response) {
   if (request.method !== 'POST') {

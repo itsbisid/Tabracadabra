@@ -1,4 +1,4 @@
-import { selectRows, sendJson } from './portal-utils.js';
+import { selectRows, sendJson } from '../api-shared/portal-utils.js';
 
 const REQUIRED_TABLES = [
   'rounds',

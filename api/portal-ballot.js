@@ -6,7 +6,7 @@ import {
   upsertRows,
   validateTokenProfile,
   verifyPortalToken
-} from './portal-utils.js';
+} from '../api-shared/portal-utils.js';
 
 function validateBallotRows(pairing, rows) {
   const teamIds = [pairing.og_team_id, pairing.oo_team_id, pairing.cg_team_id, pairing.co_team_id].filter(Boolean);

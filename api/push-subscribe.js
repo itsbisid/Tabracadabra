@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { assertPushConfigured, collectBody, sendJson, upsertPushSubscription } from './push-utils.js';
+import { assertPushConfigured, collectBody, sendJson, upsertPushSubscription } from '../api-shared/push-utils.js';
 
 function isValidSubscription(subscription) {
   return subscription

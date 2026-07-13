@@ -5,7 +5,7 @@ import {
   selectRows,
   sendJson,
   validateTokenProfile
-} from './portal-utils.js';
+} from '../api-shared/portal-utils.js';
 
 export default async function handler(request, response) {
   if (request.method !== 'POST') {

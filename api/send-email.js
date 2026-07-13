@@ -1,4 +1,4 @@
-import { hasEmailTransportConfig, sendMailToEach } from './email-transport.js';
+import { hasEmailTransportConfig, sendMailToEach } from '../api-shared/email-transport.js';
 
 const MAX_RECIPIENTS = 5;
 const ADMIN_ROLES = new Set(['TAB_DIRECTOR', 'CONVENOR', 'DIRECTOR', 'DEPUTY_CONVENOR']);

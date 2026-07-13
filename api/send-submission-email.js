@@ -1,4 +1,4 @@
-import { hasEmailTransportConfig, sendMail } from './email-transport.js';
+import { hasEmailTransportConfig, sendMail } from '../api-shared/email-transport.js';
 
 function sendJson(response, status, payload) {
   response.statusCode = status;
