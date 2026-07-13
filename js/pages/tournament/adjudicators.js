@@ -99,6 +99,39 @@ export async function renderAdjudicators(container) {
     }
   };
 
+  // Inline form handler (attached at parse time, so no render/timing race).
+  window.tcSaveAdjudicator = async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const saveBtn = form.querySelector('button[type="submit"]');
+    const fd = new FormData(form);
+    const name = String(fd.get('name') || '').trim();
+    if (!name) { alert("Please enter the adjudicator's full name."); return false; }
+
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+    const { error } = await supabase.from('adjudicators').insert({
+      tournament_id: tournamentId,
+      name,
+      email: String(fd.get('email') || '').trim() || null,
+      institution: String(fd.get('institution') || '').trim() || null,
+      status: 'Active'
+    });
+
+    if (error) {
+      const msg = /row-level security/i.test(error.message)
+        ? 'You do not have permission to edit this tournament (are you signed in as the tournament owner?).'
+        : error.message;
+      alert('Could not add adjudicator: ' + msg);
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Adjudicator'; }
+    } else {
+      const modal = document.getElementById('add-adj-modal');
+      if (modal) modal.style.display = 'none';
+      form.reset();
+      fetchAndRender();
+    }
+    return false;
+  };
+
   const fetchAndRender = async () => {
     const { data, error } = await supabase
       .from('adjudicators')
@@ -113,7 +146,7 @@ export async function renderAdjudicators(container) {
     renderUI(data || []);
   };
 
-  const renderUI = async (judges) => {
+  const renderUI = (judges) => {
     const tableHTML = `
       <div style="background:white; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
         <table style="width:100%; border-collapse:collapse; text-align:left; font-size:14px;">
@@ -193,7 +226,7 @@ export async function renderAdjudicators(container) {
       <div id="add-adj-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.4); z-index:9999; justify-content:center; align-items:center; backdrop-filter:blur(2px);">
         <div style="background:white; border-radius:12px; padding:24px 32px; width:500px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
           <h2 style="font-size:20px; font-weight:700; margin-bottom:24px;">Manual Adjudicator Entry</h2>
-          <form id="manual-adj-form" style="display:flex; flex-direction:column; gap:16px;">
+          <form id="manual-adj-form" onsubmit="return window.tcSaveAdjudicator(event)" style="display:flex; flex-direction:column; gap:16px;">
             <div class="form-group"><label class="form-label">Full Name</label><input name="name" required class="form-input"></div>
             <div class="form-group"><label class="form-label">Email Address</label><input name="email" type="email" class="form-input"></div>
             <div class="form-group"><label class="form-label">Institution</label><input name="institution" class="form-input"></div>
@@ -219,39 +252,7 @@ export async function renderAdjudicators(container) {
       ` : tableHTML}
     `;
 
-    await renderAppLayout(container, '/tournament/adjudicators', 'Adjudicators', 'Manage adjudicators participating in this tournament', content);
-
-    // Wire the manual-entry form after every render. (The old setTimeout(100)
-    // raced the async data fetch and usually left the form unwired, so
-    // "Save Adjudicator" silently did nothing.)
-    const form = document.getElementById('manual-adj-form');
-    if (form) {
-      form.onsubmit = async (e) => {
-        e.preventDefault();
-        const saveBtn = form.querySelector('button[type="submit"]');
-        const fd = new FormData(form);
-        const name = String(fd.get('name') || '').trim();
-        if (!name) { alert("Please enter the adjudicator's full name."); return; }
-
-        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
-        const { error } = await supabase.from('adjudicators').insert({
-          tournament_id: tournamentId,
-          name,
-          email: String(fd.get('email') || '').trim() || null,
-          institution: String(fd.get('institution') || '').trim() || null,
-          status: 'Active'
-        });
-
-        if (error) {
-          alert('Could not add adjudicator: ' + error.message);
-          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Adjudicator'; }
-        } else {
-          document.getElementById('add-adj-modal').style.display = 'none';
-          form.reset();
-          fetchAndRender();
-        }
-      };
-    }
+    renderAppLayout(container, '/tournament/adjudicators', 'Adjudicators', 'Manage adjudicators participating in this tournament', content);
   };
 
   fetchAndRender();
