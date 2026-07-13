@@ -18,13 +18,17 @@ export async function renderRegistrationLinks(container) {
 
   window.tcCreateRegLink = async () => {
     const roleType = document.querySelector('select.form-select').value;
-    const title = document.querySelector('input[type="text"]').value || 'Registration';
     const btn = document.querySelector('button[onclick="window.tcCreateRegLink()"]');
     const originalText = btn.innerHTML;
-    
+
     let roles = ['Team', 'Adjudicator'];
     if (roleType.includes('Teams only')) roles = ['Team'];
     if (roleType.includes('Adjudicators only')) roles = ['Adjudicator'];
+
+    // Default the label to the roles it accepts, so links are distinguishable
+    // instead of every link being named the same thing.
+    const typedTitle = (document.querySelector('input[type="text"]').value || '').trim();
+    const title = typedTitle || `${roles.join(' & ')} registration`;
 
     btn.disabled = true;
     btn.innerHTML = `${icon('activity', 14)} Creating...`;
@@ -423,7 +427,7 @@ export async function renderRegistrationLinks(container) {
 
       <div style="margin-bottom:20px;">
         <label style="display:block; font-size:12px; color:var(--color-text-muted); margin-bottom:4px;">Link title</label>
-        <input type="text" class="form-input" value="SDFG Registration" style="max-width:100%;">
+        <input type="text" class="form-input" placeholder="e.g. Main registration (leave blank to auto-name by role)" style="max-width:100%;">
         <div style="font-size:11px; color:var(--color-text-muted); margin-top:4px;">One link for debaters, wild speakers...</div>
       </div>
 
