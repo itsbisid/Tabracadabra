@@ -404,9 +404,7 @@ export async function renderRegistrationLinks(container) {
     </div>
   `;
 
-  const initialContent = `
-    ${isPendingView ? `${pendingViewHeader}${reviewQueueSection}` : ''}
-
+  const createFormContent = `
     <!-- Top Action Title -->
     <div style="font-weight:700; font-size:16px; margin-bottom:4px; color:var(--color-text);">Create registration link</div>
     <div style="font-size:13px; color:var(--color-text-muted); margin-bottom:16px;">Public link to invite submissions. Tells us how active entries remain, they must go to review.</div>
@@ -511,9 +509,13 @@ export async function renderRegistrationLinks(container) {
     <!-- Active Links -->
     <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--color-text);">Active links</div>
     <div id="active-links-container" style="margin-bottom:32px;"></div>
-
-    ${isPendingView ? '' : reviewQueueSection}
   `;
+
+  // Pending view (reached from the dashboard "Pending"/"Approve" cards) shows
+  // ONLY the approvals queue. The full create-link form is shown otherwise.
+  const initialContent = isPendingView
+    ? `${pendingViewHeader}${reviewQueueSection}`
+    : `${createFormContent}${reviewQueueSection}`;
 
   renderAppLayout(
     container,
