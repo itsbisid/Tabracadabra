@@ -1,6 +1,7 @@
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
 import { escapeHtml } from '../lib/html.js';
+import { getGoogleOAuthBlockedMessage, isGoogleOAuthUnsupportedBrowser, signInWithGoogle } from '../lib/oauth-browser.js';
 
 export function renderSignup(container, navigate) {
   container.className = '';
@@ -18,6 +19,7 @@ export function renderSignup(container, navigate) {
           ${icon('google', 24)}
           Sign up with Google
         </button>
+        <p id="oauth-notice" class="auth-notice" hidden></p>
         
         <div class="auth-divider">
           <span>OR SIGN UP WITH EMAIL</span>
@@ -73,6 +75,17 @@ export function renderSignup(container, navigate) {
   const confirmToggleBtn = container.querySelector('#confirm-password-toggle');
   const googleBtn = container.querySelector('#google-signup');
   const submitBtn = container.querySelector('#submit-btn');
+  const oauthNotice = container.querySelector('#oauth-notice');
+
+  function showOAuthNotice(message) {
+    oauthNotice.textContent = message;
+    oauthNotice.hidden = false;
+  }
+
+  if (isGoogleOAuthUnsupportedBrowser()) {
+    googleBtn.disabled = true;
+    showOAuthNotice(getGoogleOAuthBlockedMessage());
+  }
 
   // Password Visibility Toggle
   toggleBtn.addEventListener('click', () => {
@@ -89,11 +102,17 @@ export function renderSignup(container, navigate) {
 
   // Google Sign Up
   googleBtn.addEventListener('click', async () => {
-    const { error } = await supabase.auth.signInWithOAuth({ 
-      provider: 'google',
-      options: { redirectTo: window.location.origin }
-    });
-    if (error) alert(error.message);
+    oauthNotice.hidden = true;
+    const originalText = googleBtn.innerHTML;
+    googleBtn.innerHTML = 'Opening Google...';
+    googleBtn.disabled = true;
+
+    const { error } = await signInWithGoogle(supabase);
+    if (error) {
+      showOAuthNotice(error.message);
+      googleBtn.innerHTML = originalText;
+      googleBtn.disabled = isGoogleOAuthUnsupportedBrowser();
+    }
   });
 
   // Email/Password Sign Up

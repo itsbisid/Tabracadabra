@@ -1,5 +1,6 @@
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
+import { getGoogleOAuthBlockedMessage, isGoogleOAuthUnsupportedBrowser, signInWithGoogle } from '../lib/oauth-browser.js';
 
 export function renderLogin(container, navigate) {
   container.className = '';
@@ -17,6 +18,7 @@ export function renderLogin(container, navigate) {
           ${icon('google', 24)}
           Sign in with Google
         </button>
+        <p id="oauth-notice" class="auth-notice" hidden></p>
         
         <div class="auth-divider">
           <span>OR SIGN IN WITH EMAIL</span>
@@ -54,6 +56,17 @@ export function renderLogin(container, navigate) {
   const toggleBtn = container.querySelector('#password-toggle');
   const googleBtn = container.querySelector('#google-signin');
   const submitBtn = container.querySelector('#submit-btn');
+  const oauthNotice = container.querySelector('#oauth-notice');
+
+  function showOAuthNotice(message) {
+    oauthNotice.textContent = message;
+    oauthNotice.hidden = false;
+  }
+
+  if (isGoogleOAuthUnsupportedBrowser()) {
+    googleBtn.disabled = true;
+    showOAuthNotice(getGoogleOAuthBlockedMessage());
+  }
 
   // Password Visibility Toggle
   toggleBtn.addEventListener('click', () => {
@@ -64,11 +77,17 @@ export function renderLogin(container, navigate) {
 
   // Google Sign In
   googleBtn.addEventListener('click', async () => {
-    const { error } = await supabase.auth.signInWithOAuth({ 
-      provider: 'google',
-      options: { redirectTo: window.location.origin }
-    });
-    if (error) alert(error.message);
+    oauthNotice.hidden = true;
+    const originalText = googleBtn.innerHTML;
+    googleBtn.innerHTML = 'Opening Google...';
+    googleBtn.disabled = true;
+
+    const { error } = await signInWithGoogle(supabase);
+    if (error) {
+      showOAuthNotice(error.message);
+      googleBtn.innerHTML = originalText;
+      googleBtn.disabled = isGoogleOAuthUnsupportedBrowser();
+    }
   });
 
   // Email/Password Sign In

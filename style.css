@@ -1872,6 +1872,26 @@ img {
   border-color: #CBD5E1;
 }
 
+.auth-google-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-notice {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #FACC15;
+  border-radius: 8px;
+  background: #FFFBEB;
+  color: #854D0E;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.auth-notice[hidden] {
+  display: none;
+}
+
 .auth-footer {
   text-align: center;
   margin-top: 32px;
