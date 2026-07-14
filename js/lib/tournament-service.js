@@ -93,19 +93,9 @@ export async function deleteTournament(tournamentId) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('You must be signed in to delete a tournament.');
 
-  const response = await fetch('/api/delete-data', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.access_token}`
-    },
-    body: JSON.stringify({ scope: 'tournament', tournamentId })
+  const { data, error } = await supabase.rpc('delete_tournament_data', {
+    target_tournament_id: tournamentId
   });
-  const body = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(body.error || 'Could not delete this tournament.');
-  }
-
-  return body;
+  if (error) throw new Error(error.message || 'Could not delete this tournament.');
+  return data;
 }
