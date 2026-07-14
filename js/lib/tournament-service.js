@@ -93,13 +93,13 @@ export async function deleteTournament(tournamentId) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('You must be signed in to delete a tournament.');
 
-  const response = await fetch('/api/delete-tournament', {
+  const response = await fetch('/api/delete-data', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session.access_token}`
     },
-    body: JSON.stringify({ tournamentId })
+    body: JSON.stringify({ scope: 'tournament', tournamentId })
   });
   const body = await response.json().catch(() => ({}));
 

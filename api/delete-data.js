@@ -1,8 +1,9 @@
 import {
+  canAdministerTournament,
   collectBody,
+  deleteAccountData,
   deleteTournamentData,
   getSessionContext,
-  canAdministerTournament,
   sendJson
 } from '../api-shared/deletion-utils.js';
 
@@ -21,16 +22,28 @@ export default async function handler(request, response) {
     return;
   }
 
-  const tournamentId = String(payload.tournamentId || '').trim();
-  if (!tournamentId) {
-    sendJson(response, 400, { error: 'A tournament id is required.' });
+  const scope = String(payload.scope || '').trim().toLowerCase();
+  if (!['account', 'tournament'].includes(scope)) {
+    sendJson(response, 400, { error: 'A valid deletion scope is required.' });
     return;
   }
 
   try {
     const session = await getSessionContext(request);
     if (!session) {
-      sendJson(response, 401, { error: 'You must be signed in to delete a tournament.' });
+      sendJson(response, 401, { error: `You must be signed in to delete this ${scope}.` });
+      return;
+    }
+
+    if (scope === 'account') {
+      const result = await deleteAccountData(session.user);
+      sendJson(response, 200, { ok: true, result });
+      return;
+    }
+
+    const tournamentId = String(payload.tournamentId || '').trim();
+    if (!tournamentId) {
+      sendJson(response, 400, { error: 'A tournament id is required.' });
       return;
     }
 
@@ -42,6 +55,6 @@ export default async function handler(request, response) {
     const deleted = await deleteTournamentData(tournamentId);
     sendJson(response, 200, { ok: true, deleted });
   } catch (error) {
-    sendJson(response, 500, { error: error.message || 'Could not delete this tournament.' });
+    sendJson(response, 500, { error: error.message || `Could not delete this ${scope}.` });
   }
 }

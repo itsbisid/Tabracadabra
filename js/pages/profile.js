@@ -163,11 +163,13 @@ export async function renderProfile(container) {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('You must be signed in to delete your account.');
 
-      const response = await fetch('/api/delete-account', {
+      const response = await fetch('/api/delete-data', {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`
-        }
+        },
+        body: JSON.stringify({ scope: 'account' })
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || 'Could not delete your account.');
