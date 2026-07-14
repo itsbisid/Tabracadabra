@@ -1,8 +1,12 @@
 import { icon } from './icons.js';
 import { supabase } from '../lib/supabase.js';
+import { escapeHtml } from '../lib/html.js';
+import { teamLabelFromMap } from '../lib/team-display.js';
 
 export function showBallotModal(pairing, onSave, options = {}) {
   const modalRoot = document.getElementById('modal-root');
+  const teamMap = options.teamMap || new Map();
+  const hideTeamIdentities = Boolean(options.hideTeamIdentities);
   const teams = [
     { pos: 'OG', id: pairing.og_team_id },
     { pos: 'OO', id: pairing.oo_team_id },
@@ -36,7 +40,7 @@ export function showBallotModal(pairing, onSave, options = {}) {
                 <tr style="border-bottom:1px solid #f1f5f9;">
                   <td style="padding:12px 0;">
                     <div style="font-weight:700; font-size:13px;">${t.pos}</div>
-                    <div style="font-size:11px; color:#64748b;">${t.id}</div>
+                    <div style="font-size:11px; color:#64748b;">${hideTeamIdentities ? `Blind team ${escapeHtml(t.pos)}` : teamLabelFromMap(teamMap, t.id)}</div>
                     <input type="hidden" name="team_${idx}" value="${t.id}">
                   </td>
                   <td style="padding:12px 0;">

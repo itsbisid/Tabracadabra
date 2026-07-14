@@ -17,6 +17,7 @@ import { renderSettings } from './pages/tournament/settings.js';
 import { renderDebateRounds } from './pages/tournament/debate-rounds.js';
 import { renderMotions } from './pages/tournament/motions.js';
 import { renderTeamBreak } from './pages/tournament/team-break.js';
+import { renderAdjudicatorBreak } from './pages/tournament/adjudicator-break.js';
 import { renderPublish } from './pages/tournament/publish.js';
 import { renderTeams } from './pages/tournament/teams.js';
 import { renderRegistrationLinks } from './pages/tournament/registration-links.js';
@@ -50,6 +51,7 @@ const routes = {
   '/tournament/debate-rounds': renderDebateRounds,
   '/tournament/motions': renderMotions,
   '/tournament/team-break': renderTeamBreak,
+  '/tournament/adjudicator-break': renderAdjudicatorBreak,
   '/tournament/publish': renderPublish,
   '/tournament/registration-links': renderRegistrationLinks,
   '/tournament/teams': renderTeams,

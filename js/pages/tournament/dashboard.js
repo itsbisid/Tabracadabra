@@ -165,6 +165,45 @@ export async function renderTournamentDashboard(container) {
             Real roster data synced with Teams/Adjudicators pages.
           </div>
       </div>
+
+      <!-- Rounds Tab -->
+      <div id="dash-tab-rounds" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:16px; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:700; font-size:14px;">Rounds</div>
+            <div style="font-size:12px; color:var(--color-text-muted); margin-top:2px;">Create, blind, publish, and complete debate rounds.</div>
+          </div>
+          <button onclick="window.tcNavigate('/tournament/debate-rounds')" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 16)} Add Round</button>
+        </div>
+        <div style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:24px; display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px;">
+          <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px;">
+            <div style="color:var(--color-primary); margin-bottom:10px;">${icon('list', 18)}</div>
+            <div style="font-weight:800; font-size:14px; margin-bottom:4px;">Build rounds</div>
+            <div style="font-size:12px; color:#64748b;">Set round number, type, status, and motion details.</div>
+          </div>
+          <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px;">
+            <div style="color:var(--color-primary); margin-bottom:10px;">${icon('eyeOff', 18)}</div>
+            <div style="font-weight:800; font-size:14px; margin-bottom:4px;">Blind or open</div>
+            <div style="font-size:12px; color:#64748b;">Hide team identities from adjudicators until tab opens them.</div>
+          </div>
+          <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px;">
+            <div style="color:var(--color-primary); margin-bottom:10px;">${icon('send', 18)}</div>
+            <div style="font-weight:800; font-size:14px; margin-bottom:4px;">Publish safely</div>
+            <div style="font-size:12px; color:#64748b;">Release pairings, panels, rooms, and motions with confirmations.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Publish Tab -->
+      <div id="dash-tab-publish" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <div style="font-weight:700; font-size:14px;">Publish</div>
+          <div style="font-size:13px; color:var(--color-primary); cursor:pointer;" onclick="window.tcNavigate('/tournament/publish')">Open Publish Tools</div>
+        </div>
+        <div style="background:white; border:1px solid var(--color-border); border-radius:8px; padding:32px; text-align:center; font-size:13px; color:var(--color-text-muted);">
+          Publish tools are available from the tournament publish page.
+        </div>
+      </div>
     `;
 
     renderAppLayout(

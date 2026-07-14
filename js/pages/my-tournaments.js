@@ -1,8 +1,25 @@
 import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
 import { getCurrentUser } from '../lib/auth-utils.js';
-import { setActiveTournamentId } from '../lib/tournament-context.js';
-import { fetchUserTournaments } from '../lib/tournament-service.js';
+import { clearActiveTournamentId, getActiveTournamentId, setActiveTournamentId } from '../lib/tournament-context.js';
+import { deleteTournament, fetchUserTournaments } from '../lib/tournament-service.js';
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeJsString(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+}
 
 export async function renderMyTournaments(container) {
   const user = await getCurrentUser();
@@ -27,24 +44,59 @@ export async function renderMyTournaments(container) {
     window.tcNavigate('/tournament/dashboard');
   };
 
+  window.tcDeleteTournamentFromList = async (event, id, name) => {
+    event.stopPropagation();
+    const confirmed = confirm(`Delete "${name}" permanently? This removes only this tournament and its data. Your account and other tournaments will remain active.`);
+    if (!confirmed) return;
+
+    const button = event.currentTarget;
+    const originalText = button.innerHTML;
+    button.innerHTML = 'Deleting...';
+    button.disabled = true;
+
+    try {
+      await deleteTournament(id);
+      if (getActiveTournamentId() === id) clearActiveTournamentId();
+      alert(`"${name}" was deleted. Your account and other tournaments are unchanged.`);
+      await fetchTournaments();
+    } catch (error) {
+      alert(error.message || 'Could not delete this tournament.');
+      button.innerHTML = originalText;
+      button.disabled = false;
+    }
+  };
+
   const renderUI = (tournaments) => {
     const tournamentCards = tournaments.map(t => {
       let badgeClass = 'badge--draft';
       if (t.status === 'active') badgeClass = 'badge--active';
       if (t.status === 'completed') badgeClass = 'badge--completed';
+      const canDelete = ['director', 'unclaimed director', 'convenor', 'tab_director', 'deputy_convenor'].includes(String(t.userRole || '').toLowerCase());
+      const displayName = t.short_name || t.name || 'Untitled tournament';
       
       return `
         <div class="tournament-card" onclick="window.tcSelectTournament('${t.id}')">
           <div class="tournament-card__header">
-            <div class="tournament-card__name">${t.short_name || t.name}</div>
-            <span class="badge ${badgeClass}">${(t.status || 'draft').toUpperCase()}</span>
+            <div class="tournament-card__name">${escapeHtml(displayName)}</div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="badge ${badgeClass}">${escapeHtml((t.status || 'draft').toUpperCase())}</span>
+              ${canDelete ? `
+                <button
+                  type="button"
+                  title="Delete tournament"
+                  aria-label="Delete ${escapeHtml(displayName)}"
+                  onclick="window.tcDeleteTournamentFromList(event, '${escapeJsString(t.id)}', '${escapeJsString(displayName)}')"
+                  style="width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #fecaca; border-radius:8px; color:#dc2626; background:#fff5f5; cursor:pointer;"
+                >${icon('trash', 16)}</button>
+              ` : ''}
+            </div>
           </div>
           <div class="tournament-card__meta">
             <div class="tournament-card__meta-item">
-              ${icon('calendar', 14)} ${t.start_date || 'TBD'}
+              ${icon('calendar', 14)} ${escapeHtml(t.start_date || 'TBD')}
             </div>
             <div class="tournament-card__meta-item">
-              <span class="badge badge--role">${t.userRole || 'Member'}</span>
+              <span class="badge badge--role">${escapeHtml(t.userRole || 'Member')}</span>
             </div>
           </div>
         </div>

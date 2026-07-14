@@ -3,6 +3,7 @@ import { showBallotModal } from '../components/ballot-modal.js';
 import { supabase } from '../lib/supabase.js';
 import { escapeHtml, escapeJsString } from '../lib/html.js';
 import { getPortalPushStatus, subscribeToPortalPush } from '../lib/push-service.js';
+import { teamLabelFromMap, teamLabelHtml } from '../lib/team-display.js';
 import QRCode from 'qrcode';
 
 function getRoleLabel(role) {
@@ -32,8 +33,16 @@ function positionForTeam(pairing, teamId) {
   return Object.entries(positions).find(([, id]) => id === teamId)?.[0] || '';
 }
 
-function teamName(teamMap, teamId) {
-  return escapeHtml(teamMap.get(teamId)?.name || teamId || 'TBD');
+function isBlindForJudge(pairing, role) {
+  return role === 'judge'
+    && pairing?.rounds?.is_blind !== false
+    && pairing?.rounds?.results_released !== true
+    && String(pairing?.rounds?.status || '').toLowerCase() !== 'completed';
+}
+
+function teamName(teamMap, teamId, { blind = false, position = '' } = {}) {
+  if (blind) return escapeHtml(`Blind team ${position || ''}`.trim());
+  return teamLabelFromMap(teamMap, teamId);
 }
 
 async function fetchProfile(role, id) {
@@ -296,7 +305,7 @@ function renderProfileCard(role, profile, tournament) {
         ['Email', profile.email || 'Not provided']
       ]
     : [
-        ['Team', profile.name],
+        ['Team', `${profile.emoji || ''} ${profile.name || ''}`.trim()],
         ['Institution', profile.institution || 'Unaffiliated'],
         ['Speaker 1', profile.speaker1_name || 'TBD'],
         ['Speaker 2', profile.speaker2_name || 'TBD']
@@ -337,6 +346,7 @@ function renderDrawCard(role, profile, pairings, teamMap) {
       <div class="portal-card__heading">${icon('mapPin', 18)} Debate draw / venue</div>
       ${releasedPairings.map(pairing => {
         const position = role === 'team' ? positionForTeam(pairing, profile.id) : 'Chair';
+        const blind = isBlindForJudge(pairing, role);
         return `
           <div style="border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:12px;">
             <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:12px;">
@@ -351,9 +361,10 @@ function renderDrawCard(role, profile, pairings, teamMap) {
               ${['OG', 'OO', 'CG', 'CO'].map(pos => {
                 const teamId = pairing[`${pos.toLowerCase()}_team_id`];
                 const active = teamId === profile.id;
-                return `<div style="border:1px solid ${active ? '#0044b3' : '#e2e8f0'}; background:${active ? '#eff6ff' : '#fff'}; border-radius:8px; padding:10px;"><strong>${pos}</strong><br>${teamName(teamMap, teamId)}</div>`;
+                return `<div style="border:1px solid ${active ? '#0044b3' : '#e2e8f0'}; background:${active ? '#eff6ff' : '#fff'}; border-radius:8px; padding:10px;"><strong>${pos}</strong><br>${teamName(teamMap, teamId, { blind, position: pos })}</div>`;
               }).join('')}
             </div>
+            ${blind ? `<p class="portal-muted" style="margin-top:10px;">This is a blind round. Team identities are hidden until tab releases them or marks the round complete.</p>` : ''}
             ${pairing.jitsi_link ? `<a href="${escapeHtml(pairing.jitsi_link)}" target="_blank" rel="noopener" class="portal-button" style="margin-top:14px;">${icon('mic', 16)} Join room</a>` : ''}
           </div>
         `;
@@ -543,14 +554,14 @@ function renderHero(role, profile, personName, tournament, pairings, blockInfo) 
     : (blockInfo?.blocked ? 'Locked until feedback is submitted' : 'No active assignment');
   const roleText = role === 'judge'
     ? `Adjudicator${profile.is_trainee ? ' / Trainee' : ''}`
-    : profile.name || 'Team';
+    : `${profile.emoji || ''} ${profile.name || 'Team'}`.trim();
   const institution = profile.institution || (role === 'judge' ? 'Independent' : 'Unaffiliated');
 
   return `
     <section class="portal-hero">
       <div class="portal-hero-main">
         <div class="portal-kicker">${escapeHtml(tournamentName)} · ${escapeHtml(getRoleLabel(role))}</div>
-        <h1>${escapeHtml(personName)}</h1>
+        <h1>${role === 'judge' ? escapeHtml(personName) : teamLabelHtml(profile)}</h1>
         <div class="portal-hero-meta">
           <span>${icon(role === 'judge' ? 'gavel' : 'users', 16)} ${escapeHtml(roleText)}</span>
           <span>${icon('building', 16)} ${escapeHtml(institution)}</span>
@@ -710,14 +721,16 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap, blockInfo) {
   }
 
   const position = role === 'judge' ? judgePositionForPairing(releasedPairing, profile.id) : positionForTeam(releasedPairing, profile.id);
+  const blind = isBlindForJudge(releasedPairing, role);
   const prepCountdown = getPrepCountdown(releasedPairing.rounds);
-  const panel = [
-    releasedPairing.chair_id ? { role: 'Chair', id: releasedPairing.chair_id } : null,
-    ...(releasedPairing.adjudicator_allocations || []).map(allocation => ({
-      role: allocation.role === 'TRAINEE' ? 'Trainee' : 'Wing',
-      id: allocation.adjudicator_id
-    }))
-  ].filter(Boolean);
+  const panelByJudge = new Map();
+  if (releasedPairing.chair_id) panelByJudge.set(releasedPairing.chair_id, 'Chair');
+  (releasedPairing.adjudicator_allocations || []).forEach(allocation => {
+    if (!panelByJudge.has(allocation.adjudicator_id)) {
+      panelByJudge.set(allocation.adjudicator_id, allocation.role === 'TRAINEE' ? 'Trainee' : 'Wing');
+    }
+  });
+  const panel = [...panelByJudge].map(([id, panelRole]) => ({ id, role: panelRole }));
 
   return `
     <section id="portal-round" class="portal-panel">
@@ -749,9 +762,10 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap, blockInfo) {
           ${['OG', 'OO', 'CG', 'CO'].map(pos => {
             const teamId = releasedPairing[`${pos.toLowerCase()}_team_id`];
             const active = teamId === profile.id;
-            return `<div class="${active ? 'active' : ''}"><strong>${pos}</strong><br>${teamName(teamMap, teamId)}</div>`;
+            return `<div class="${active ? 'active' : ''}"><strong>${pos}</strong><br>${teamName(teamMap, teamId, { blind, position: pos })}</div>`;
           }).join('')}
         </div>
+        ${blind ? `<p class="portal-empty" style="margin-top:10px;">Blind round: team identities are hidden until tab completes the round, opens it, or releases its results.</p>` : ''}
         ${panel.length > 0 ? `
           <div class="portal-panel-list">
             ${panel.map(member => `
@@ -799,7 +813,7 @@ function renderRegistrationPanel(role, profile, personName) {
         <div class="portal-status-pill is-success">Approved</div>
       </div>
       <div class="portal-panel-body portal-registration-rows">
-        <div><span>Team name</span><strong>${escapeHtml(profile.name || 'Not provided')}</strong></div>
+        <div><span>Team name</span><strong>${teamLabelHtml(profile)}</strong></div>
         ${profile.emoji ? `<div><span>Emoji</span><strong>${escapeHtml(profile.emoji)}</strong></div>` : ''}
         <div><span>Speakers</span><strong>${escapeHtml(getTeamSpeakers(profile))}</strong></div>
         <div>
@@ -880,6 +894,8 @@ export async function renderPrivatePortal(container, role, id) {
     const pairing = pairings.find(item => item.id === pairingId);
     if (pairing) {
       showBallotModal(pairing, () => renderPrivatePortal(container, safeRole, id), {
+        teamMap,
+        hideTeamIdentities: isBlindForJudge(pairing, safeRole),
         onSubmit: (ballots) => postPortalAction('/api/portal-ballot', {
           token: portalSession.token,
           pairingId,

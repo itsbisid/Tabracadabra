@@ -1,27 +1,22 @@
 import { renderAppLayout } from '../../components/layout.js';
-import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
-import { BPEngine } from '../../lib/bp-engine.js';
-import { isTabVisible, isAdmin } from '../../lib/auth-helpers.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { escapeHtml } from '../../lib/html.js';
+import { teamLabelHtml } from '../../lib/team-display.js';
+import { fetchVisibleStandingsBallots } from '../../lib/visible-results.js';
 
 export async function renderTeamStandings(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
 
   const fetchAndRender = async () => {
-    const visible = await isTabVisible(tournamentId);
-    
-    if (!visible) {
-      renderBlindUI();
-      return;
-    }
-
-    const { data: teams } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
-    const { data: ballots } = await supabase.from('ballots').select('*').eq('tournament_id', tournamentId);
+    const [{ data: teams }, ballots] = await Promise.all([
+      supabase.from('teams').select('*').eq('tournament_id', tournamentId),
+      fetchVisibleStandingsBallots(tournamentId)
+    ]);
     
     const standings = (teams || []).map(team => {
-      const teamBallots = ballots?.filter(b => b.team_id === team.id) || [];
+      const teamBallots = ballots.filter(b => b.team_id === team.id);
       const points = teamBallots.reduce((acc, b) => acc + (b.points || 0), 0);
       const speaks = teamBallots.reduce((acc, b) => acc + (b.speaker_points || 0), 0);
       return { ...team, points, speaks };
@@ -30,41 +25,16 @@ export async function renderTeamStandings(container) {
       return b.speaks - a.speaks;
     });
 
-    renderUI(standings, await isAdmin(tournamentId));
+    renderUI(standings);
   };
 
-  const renderBlindUI = () => {
-    const content = `
-      <div style="min-height:300px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; background:white; border:1px solid #e2e8f0; border-radius:12px; padding:32px;">
-        <div style="font-size:48px; margin-bottom:16px;">🔒</div>
-        <h2 style="font-weight:800; font-size:20px; color:var(--color-text); margin-bottom:8px;">Tab is currently blind</h2>
-        <p style="color:#64748b; max-width:400px; line-height:1.6;">Standings are hidden during the preliminary rounds to maintain tournament integrity. Results will be published after the break announcement.</p>
-      </div>
-    `;
-    renderAppLayout(container, '/tournament/team-standings', 'Team Standings', '', content);
-  };
-
-  window.tcPublishTab = async () => {
-    if (confirm('CRITICAL: Are you sure you want to PUBLISH the tab? This will make all rankings and speaker points public to everyone instantly.')) {
-      const { error } = await supabase.from('tournaments').update({ is_tab_released: true }).eq('id', tournamentId);
-      if (error) alert(error.message);
-      else {
-        alert('Tournament results have been published!');
-        fetchAndRender();
-      }
-    }
-  };
-
-  const renderUI = (standings, isUserAdmin) => {
+  const renderUI = standings => {
     const content = `
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px;">
         <div>
           <h1 style="font-size:24px; font-weight:800; color:var(--color-text); margin-bottom:4px;">Team Standings</h1>
-          <div style="font-size:14px; color:var(--color-text-muted);">Ranked by Points, then total Speaker Points</div>
+          <div style="font-size:14px; color:var(--color-text-muted);">Ranked by points, then speaker points. Unreleased blind-round results are excluded.</div>
         </div>
-        ${isUserAdmin ? `
-          <button onclick="window.tcPublishTab()" class="btn btn--sm" style="background:#0044b3; color:white;">${icon('send', 14)} Publish Tab</button>
-        ` : ''}
       </div>
 
       <div class="card" style="padding:0; overflow:hidden;">
@@ -83,9 +53,9 @@ export async function renderTeamStandings(container) {
               <tr style="border-bottom:1px solid #f1f5f9; transition:background 0.2s;">
                 <td style="padding:16px; font-weight:800; color:${i < 4 ? 'var(--color-primary)' : '#64748b'};">#${i + 1}</td>
                 <td style="padding:16px;">
-                  <div style="font-weight:700;">${s.name}</div>
+                  <div style="font-weight:700;">${teamLabelHtml(s)}</div>
                 </td>
-                <td style="padding:16px; color:#64748b;">${s.institution || '-'}</td>
+                <td style="padding:16px; color:#64748b;">${escapeHtml(s.institution || '-')}</td>
                 <td style="padding:16px; text-align:center;">
                   <span class="badge" style="background:var(--color-primary); color:white; font-weight:700; min-width:32px; display:inline-block;">${s.points}</span>
                 </td>

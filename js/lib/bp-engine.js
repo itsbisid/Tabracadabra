@@ -17,7 +17,7 @@ export const BPEngine = {
   /**
    * Main entry point to generate a draw for a round.
    */
-  generateDraw: async (roundId, tournamentId, roundNum, targetPanelSize = 3) => {
+  generateDraw: async (roundId, tournamentId, roundNum, targetPanelSize = 1, roomNames = []) => {
     // 1. Fetch Data
     const { data: allTeams, error: teamError } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
     const { data: judges, error: judgeError } = await supabase.from('adjudicators').select('*').eq('tournament_id', tournamentId).eq('status', 'Active');
@@ -50,8 +50,11 @@ export const BPEngine = {
     const rooms = [];
     const teamPool = [...sortedTeams];
     let roomCounter = 1;
+    const configuredRooms = (roomNames || []).map(name => String(name || '').trim()).filter(Boolean);
     while (teamPool.length >= 4) {
-      rooms.push({ label: `Room ${roomCounter++}`, teams: teamPool.splice(0, 4) });
+      const roomIndex = roomCounter - 1;
+      rooms.push({ label: configuredRooms[roomIndex] || `Room ${roomCounter}`, teams: teamPool.splice(0, 4) });
+      roomCounter += 1;
     }
 
     // 4. Step 3: Positions
@@ -65,50 +68,43 @@ export const BPEngine = {
         oo_team_id: allocated.OO.id,
         cg_team_id: allocated.CG.id,
         co_team_id: allocated.CO.id,
-        jitsi_link: `https://meet.jit.si/Tabra_${tournamentId.substring(0,8)}_${room.label.replace(' ', '')}`
+        jitsi_link: `https://meet.jit.si/Tabra_${tournamentId.substring(0,8)}_${room.label.replace(/[^a-zA-Z0-9]/g, '')}`
       };
     });
 
-    // 5. Step 4: Top-Down Odd-Panel Allocation
+    // 5. Step 4: Top-down allocation using the administrator's exact panel size.
     const allocations = [];
     const availableJudges = [...judges].sort((a, b) => (b.score || 0) - (a.score || 0));
-    
-    // Separate Trainees
+    const panelSize = Math.max(1, Math.floor(Number(targetPanelSize) || 1));
     const votingJudges = availableJudges.filter(j => !j.is_trainee);
     const trainees = availableJudges.filter(j => j.is_trainee);
 
     if (votingJudges.length < pairings.length) {
       throw new Error(`Need at least ${pairings.length} active voting adjudicators to chair this draw.`);
     }
-
-    // Pass 1: Assign Chairs (Top-Down)
-    pairings.forEach((p, idx) => {
-      if (votingJudges.length > 0) {
-        const judge = votingJudges.shift();
-        p.chair_id = judge.id;
-        allocations.push({ pairing_idx: idx, adjudicator_id: judge.id, role: 'CHAIR' });
-      }
-    });
-
-    // Pass 2: Assign Wings in Pairs (Maintaining Odd Count: 1-Chair + 2-Wings = 3)
-    // We only add wings if targetPanelSize > 1
-    if (targetPanelSize >= 3) {
-      pairings.forEach((p, idx) => {
-        // Assign 2 Wings at a time to keep it odd (3)
-        if (votingJudges.length >= 2) {
-          const w1 = votingJudges.shift();
-          const w2 = votingJudges.shift();
-          allocations.push({ pairing_idx: idx, adjudicator_id: w1.id, role: 'WING' });
-          allocations.push({ pairing_idx: idx, adjudicator_id: w2.id, role: 'WING' });
-        }
-      });
+    const requiredAdjudicators = pairings.length * panelSize;
+    if (availableJudges.length < requiredAdjudicators) {
+      throw new Error(`Panel size ${panelSize} requires ${requiredAdjudicators} active adjudicators, but only ${availableJudges.length} are available.`);
     }
 
-    // Pass 3: Distribute Trainees (Supernumerary)
-    trainees.forEach((t, idx) => {
-      const roomIdx = idx % pairings.length;
-      allocations.push({ pairing_idx: roomIdx, adjudicator_id: t.id, role: 'TRAINEE' });
+    // Assign one voting chair to every debate.
+    pairings.forEach((p, idx) => {
+      const judge = votingJudges.shift();
+      p.chair_id = judge.id;
     });
+
+    // Fill every remaining slot. Voting adjudicators are preferred, then trainees.
+    const remainingJudges = [...votingJudges, ...trainees];
+    for (let slot = 1; slot < panelSize; slot += 1) {
+      pairings.forEach((pairing, pairingIdx) => {
+        const judge = remainingJudges.shift();
+        allocations.push({
+          pairing_idx: pairingIdx,
+          adjudicator_id: judge.id,
+          role: judge.is_trainee ? 'TRAINEE' : 'WING'
+        });
+      });
+    }
 
     return { pairings, allocations };
   },

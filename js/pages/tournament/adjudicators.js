@@ -3,12 +3,15 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml, escapeJsString } from '../../lib/html.js';
+import { isAdmin } from '../../lib/auth-helpers.js';
 
 export async function renderAdjudicators(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
+  let isUserAdmin = false;
 
   window.tcUpdateJudgeField = async (id, field, currentVal) => {
+    if (!isUserAdmin) { alert('Only tournament admins can edit adjudicators.'); return; }
     const newVal = prompt(`Update ${field}:`, currentVal);
     if (newVal !== null && newVal !== currentVal) {
       await supabase.from('adjudicators').update({ [field]: newVal }).eq('id', id);
@@ -24,6 +27,7 @@ export async function renderAdjudicators(container) {
   };
 
   window.tcImportCSV = () => {
+    if (!isUserAdmin) { alert('Only tournament admins can import adjudicators.'); return; }
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.csv';
@@ -93,6 +97,7 @@ export async function renderAdjudicators(container) {
   };
 
   window.tcDeleteAdjudicator = async (id) => {
+    if (!isUserAdmin) { alert('Only tournament admins can remove adjudicators.'); return; }
     if (confirm('Permanently remove this adjudicator from the tournament?')) {
       await supabase.from('adjudicators').delete().eq('id', id);
       fetchAndRender();
@@ -102,6 +107,7 @@ export async function renderAdjudicators(container) {
   // Inline form handler (attached at parse time, so no render/timing race).
   window.tcSaveAdjudicator = async (e) => {
     e.preventDefault();
+    if (!isUserAdmin) { alert('Only tournament admins can create adjudicators.'); return false; }
     const form = e.target;
     const saveBtn = form.querySelector('button[type="submit"]');
     const fd = new FormData(form);
@@ -133,6 +139,7 @@ export async function renderAdjudicators(container) {
   };
 
   const fetchAndRender = async () => {
+    isUserAdmin = await isAdmin(tournamentId);
     const { data, error } = await supabase
       .from('adjudicators')
       .select('*')
@@ -217,8 +224,10 @@ export async function renderAdjudicators(container) {
     const content = `
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px;">
         <div style="display:flex; gap:12px; align-items:center;">
-          <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
-          <button onclick="document.getElementById('add-adj-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Adjudicator</button>
+          ${isUserAdmin ? `
+            <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
+            <button onclick="document.getElementById('add-adj-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Adjudicator</button>
+          ` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}
         </div>
       </div>
 

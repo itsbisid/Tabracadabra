@@ -3,6 +3,9 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { isTabVisible, isAdmin } from '../../lib/auth-helpers.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { escapeHtml } from '../../lib/html.js';
+import { teamLabelHtml } from '../../lib/team-display.js';
+import { fetchVisibleStandingsBallots } from '../../lib/visible-results.js';
 
 export async function renderSpeakerTab(container) {
   const tournamentId = requireActiveTournamentId();
@@ -16,8 +19,10 @@ export async function renderSpeakerTab(container) {
       return;
     }
 
-    const { data: teams } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
-    const { data: ballots } = await supabase.from('ballots').select('*').eq('tournament_id', tournamentId);
+    const [{ data: teams }, ballots] = await Promise.all([
+      supabase.from('teams').select('*').eq('tournament_id', tournamentId),
+      fetchVisibleStandingsBallots(tournamentId)
+    ]);
     
     // Map ballots to individual speakers
     const speakerMap = {};
@@ -27,10 +32,10 @@ export async function renderSpeakerTab(container) {
       const s1Key = `${team.id}_s1`;
       const s2Key = `${team.id}_s2`;
       
-      speakerMap[s1Key] = { name: team.speaker1_name, team: team.name, eligibility: team.speaker1_eligibility || 'OPEN', points: [], total: 0 };
-      speakerMap[s2Key] = { name: team.speaker2_name, team: team.name, eligibility: team.speaker2_eligibility || 'OPEN', points: [], total: 0 };
+      speakerMap[s1Key] = { name: team.speaker1_name, team, eligibility: team.speaker1_eligibility || 'OPEN', points: [], total: 0 };
+      speakerMap[s2Key] = { name: team.speaker2_name, team, eligibility: team.speaker2_eligibility || 'OPEN', points: [], total: 0 };
       
-      const teamBallots = ballots?.filter(b => b.team_id === team.id) || [];
+      const teamBallots = ballots.filter(b => b.team_id === team.id);
       teamBallots.forEach(b => {
         speakerMap[s1Key].points.push(b.s1_points || 0);
         speakerMap[s2Key].points.push(b.s2_points || 0);
@@ -98,10 +103,10 @@ export async function renderSpeakerTab(container) {
               <tr style="border-bottom:1px solid #f1f5f9;">
                 <td style="padding:16px; font-weight:800; color:${i < 10 ? 'var(--color-primary)' : '#64748b'};">#${i + 1}</td>
                 <td style="padding:16px;">
-                  <div style="font-weight:700;">${s.name}</div>
-                  <div style="font-size:10px; color:var(--color-primary); font-weight:700; text-transform:uppercase;">${s.eligibility}</div>
+                  <div style="font-weight:700;">${escapeHtml(s.name || 'Speaker')}</div>
+                  <div style="font-size:10px; color:var(--color-primary); font-weight:700; text-transform:uppercase;">${escapeHtml(s.eligibility)}</div>
                 </td>
-                <td style="padding:16px; color:#64748b;">${s.team}</td>
+                <td style="padding:16px; color:#64748b;">${teamLabelHtml(s.team)}</td>
                 <td style="padding:16px; text-align:center; color:#64748b;">${s.avg}</td>
                 <td style="padding:16px; text-align:right; font-weight:700; color:#1e293b;">${s.total.toFixed(1)}</td>
               </tr>

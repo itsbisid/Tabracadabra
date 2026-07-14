@@ -3,10 +3,53 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml, escapeJsString } from '../../lib/html.js';
+import { DEFAULT_TEAM_EMOJI, getTeamEmoji, teamLabelHtml } from '../../lib/team-display.js';
+import { isAdmin } from '../../lib/auth-helpers.js';
+
+const EMOJI_CATEGORIES = {
+  Default: [DEFAULT_TEAM_EMOJI],
+  Animals: ['🦁', '🐯', '🐺', '🦊', '🦅', '🦉', '🐉', '🦈', '🐝', '🦋'],
+  Symbols: ['⚡', '🔥', '✨', '🌟', '💎', '🛡️', '🏹', '🎯', '👑', '🚀'],
+  Nature: ['🌊', '🌋', '🌙', '☀️', '🌴', '🌵', '🍀', '🌻', '❄️', '🌈'],
+  Objects: ['🏆', '🎲', '🎭', '🎸', '📚', '🧠', '🪄', '🧭', '🔮', '📣']
+};
+
+const RECENT_EMOJI_KEY = 'tc_recent_team_emojis';
+
+function getRecentEmojis() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_EMOJI_KEY) || '[]').filter(Boolean).slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+
+function rememberEmoji(emoji) {
+  const next = [emoji, ...getRecentEmojis().filter(item => item !== emoji)].slice(0, 12);
+  localStorage.setItem(RECENT_EMOJI_KEY, JSON.stringify(next));
+}
+
+function isMissingEmojiColumn(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('emoji') || message.includes('schema cache') || message.includes('could not find');
+}
 
 export async function renderTeams(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
+  let isUserAdmin = false;
+
+  async function insertTeamsWithEmoji(rows) {
+    let { error } = await supabase.from('teams').insert(rows);
+    if (error && isMissingEmojiColumn(error)) {
+      const fallbackRows = rows.map(({ emoji, ...row }) => row);
+      ({ error } = await supabase.from('teams').insert(fallbackRows));
+      if (!error) {
+        alert('Team saved, but the database is missing teams.emoji. Run supabase/rounds-and-team-mascots.sql to persist mascots.');
+      }
+    }
+    return { error };
+  }
 
   window.tcShareTeamURL = (id, name, speakerName) => {
     const url = `${window.location.origin}/#/portal/team/${id}?speaker=${encodeURIComponent(speakerName || '')}`;
@@ -16,6 +59,7 @@ export async function renderTeams(container) {
   };
 
   window.tcUpdateTeamField = async (id, field, currentVal) => {
+    if (!isUserAdmin) { alert('Only tournament admins can edit team details.'); return; }
     const newVal = prompt(`Update ${field}:`, currentVal);
     if (newVal !== null && newVal !== currentVal) {
       await supabase.from('teams').update({ [field]: newVal }).eq('id', id);
@@ -31,6 +75,7 @@ export async function renderTeams(container) {
   };
 
   window.tcImportCSV = () => {
+    if (!isUserAdmin) { alert('Only tournament admins can import teams.'); return; }
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.csv';
@@ -46,6 +91,7 @@ export async function renderTeams(container) {
         return {
           tournament_id: tournamentId,
           name,
+          emoji: DEFAULT_TEAM_EMOJI,
           institution: inst,
           speaker1_name: s1,
           speaker1_email: s1e,
@@ -55,14 +101,94 @@ export async function renderTeams(container) {
         };
       });
 
-      const { error } = await supabase.from('teams').insert(newTeams);
+      const { error } = await insertTeamsWithEmoji(newTeams);
       if (error) alert(error.message);
       else fetchAndRender();
     };
     input.click();
   };
 
+  window.tcOpenEmojiPicker = (teamId = '', currentEmoji = DEFAULT_TEAM_EMOJI) => {
+    if (teamId && !isUserAdmin) { alert('Only tournament admins can edit team mascots.'); return; }
+    const modalRoot = document.getElementById('modal-root');
+    const selected = currentEmoji || DEFAULT_TEAM_EMOJI;
+    const recent = getRecentEmojis();
+    const categories = recent.length ? { Recent: recent, ...EMOJI_CATEGORIES } : EMOJI_CATEGORIES;
+    modalRoot.innerHTML = `
+      <div style="position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:white; border:1px solid #e2e8f0; border-radius:10px; width:min(560px,100%); max-height:86vh; overflow:hidden; box-shadow:0 24px 60px rgba(15,23,42,.24);">
+          <div style="padding:18px 20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+            <div>
+              <h3 style="margin:0; font-size:18px; font-weight:900;">Choose team mascot</h3>
+              <p style="margin:4px 0 0; color:#64748b; font-size:13px;">Search, pick a category, or use the default mascot.</p>
+            </div>
+            <button onclick="document.getElementById('modal-root').innerHTML=''" style="border:0; background:transparent; color:#64748b; cursor:pointer;">${icon('x', 20)}</button>
+          </div>
+          <div style="padding:18px 20px;">
+            <input id="emoji-search" class="form-input" placeholder="Search emojis or categories..." oninput="window.tcFilterEmojiPicker(this.value)" style="margin-bottom:14px;">
+            <div id="emoji-picker-body" style="display:grid; gap:14px; max-height:52vh; overflow:auto;">
+              ${Object.entries(categories).map(([category, emojis]) => `
+                <section class="emoji-category" data-category="${escapeHtml(category.toLowerCase())}">
+                  <div style="font-size:11px; text-transform:uppercase; color:#64748b; font-weight:900; margin-bottom:8px;">${escapeHtml(category)}</div>
+                  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(42px, 1fr)); gap:8px;">
+                    ${emojis.map(emoji => `
+                      <button
+                        type="button"
+                        class="emoji-choice"
+                        data-emoji="${escapeHtml(emoji)}"
+                        data-search="${escapeHtml(`${category} ${emoji}`.toLowerCase())}"
+                        onclick="window.tcChooseTeamEmoji('${escapeJsString(teamId)}', '${escapeJsString(emoji)}')"
+                        style="height:42px; border:1px solid ${emoji === selected ? '#0044b3' : '#e2e8f0'}; background:${emoji === selected ? '#eff6ff' : 'white'}; border-radius:8px; cursor:pointer; font-size:22px;"
+                      >${escapeHtml(emoji)}</button>
+                    `).join('')}
+                  </div>
+                </section>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  window.tcFilterEmojiPicker = (query) => {
+    const normalized = String(query || '').trim().toLowerCase();
+    document.querySelectorAll('.emoji-category').forEach(section => {
+      let anyVisible = false;
+      section.querySelectorAll('.emoji-choice').forEach(button => {
+        const visible = !normalized || button.dataset.search.includes(normalized) || section.dataset.category.includes(normalized);
+        button.style.display = visible ? 'block' : 'none';
+        anyVisible = anyVisible || visible;
+      });
+      section.style.display = anyVisible ? 'block' : 'none';
+    });
+  };
+
+  window.tcChooseTeamEmoji = async (teamId, emoji) => {
+    rememberEmoji(emoji);
+
+    if (!teamId) {
+      const input = document.getElementById('team-emoji-input');
+      const preview = document.getElementById('team-emoji-preview');
+      if (input) input.value = emoji;
+      if (preview) preview.textContent = emoji;
+      document.getElementById('modal-root').innerHTML = '';
+      return;
+    }
+
+    const { error } = await supabase.from('teams').update({ emoji }).eq('id', teamId);
+    if (error) {
+      alert(isMissingEmojiColumn(error)
+        ? 'Could not save the mascot because the database is missing teams.emoji. Run supabase/rounds-and-team-mascots.sql.'
+        : error.message);
+      return;
+    }
+    document.getElementById('modal-root').innerHTML = '';
+    fetchAndRender();
+  };
+
   window.tcDeleteTeam = async (id) => {
+    if (!isUserAdmin) { alert('Only tournament admins can remove teams.'); return; }
     if (confirm('Permanently remove this team from the tournament?')) {
       await supabase.from('teams').delete().eq('id', id);
       fetchAndRender();
@@ -70,6 +196,7 @@ export async function renderTeams(container) {
   };
 
   window.tcToggleTeamActive = async (id, currentStatus) => {
+    if (!isUserAdmin) { alert('Only tournament admins can change team status.'); return; }
     const nextStatus = (currentStatus || 'Active') === 'Inactive' ? 'Active' : 'Inactive';
     const { error } = await supabase.from('teams').update({ status: nextStatus }).eq('id', id);
     if (error) alert(error.message);
@@ -79,6 +206,7 @@ export async function renderTeams(container) {
   // Inline form handler (attached at parse time, so no render/timing race).
   window.tcSaveTeam = async (e) => {
     e.preventDefault();
+    if (!isUserAdmin) { alert('Only tournament admins can create teams.'); return false; }
     const form = e.target;
     const saveBtn = form.querySelector('button[type="submit"]');
     const fd = new FormData(form);
@@ -89,10 +217,21 @@ export async function renderTeams(container) {
     const { error } = await supabase.from('teams').insert({
       tournament_id: tournamentId,
       name,
+      emoji: String(fd.get('emoji') || DEFAULT_TEAM_EMOJI).trim() || DEFAULT_TEAM_EMOJI,
       institution: String(fd.get('institution') || '').trim() || null,
       speaker1_name: String(fd.get('s1') || '').trim() || null,
       speaker2_name: String(fd.get('s2') || '').trim() || null,
       status: 'Active'
+    }).then(async result => {
+      if (!result.error || !isMissingEmojiColumn(result.error)) return result;
+      return supabase.from('teams').insert({
+        tournament_id: tournamentId,
+        name,
+        institution: String(fd.get('institution') || '').trim() || null,
+        speaker1_name: String(fd.get('s1') || '').trim() || null,
+        speaker2_name: String(fd.get('s2') || '').trim() || null,
+        status: 'Active'
+      });
     });
 
     if (error) {
@@ -111,6 +250,7 @@ export async function renderTeams(container) {
   };
 
   const fetchAndRender = async () => {
+    isUserAdmin = await isAdmin(tournamentId);
     const { data, error } = await supabase
       .from('teams')
       .select('*')
@@ -144,6 +284,7 @@ export async function renderTeams(container) {
               const teamId = escapeJsString(team.id);
               const teamName = escapeHtml(team.name);
               const teamNameJs = escapeJsString(team.name);
+              const teamEmoji = escapeHtml(getTeamEmoji(team));
               const institution = escapeHtml(team.institution || '-');
               const speaker1Name = escapeHtml(team.speaker1_name || '-');
               const speaker1NameJs = escapeJsString(team.speaker1_name || '');
@@ -160,8 +301,9 @@ export async function renderTeams(container) {
                 <td style="padding:16px;"><input type="checkbox"></td>
                 <td style="padding:16px;">
                   <div style="display:flex; align-items:center; gap:8px;">
+                    <button onclick="window.tcOpenEmojiPicker('${teamId}', '${escapeJsString(getTeamEmoji(team))}')" title="Choose mascot" style="width:34px; height:34px; border:1px solid #e2e8f0; border-radius:8px; background:white; cursor:pointer; font-size:18px;" class="google-emoji">${teamEmoji}</button>
                     <div>
-                      <div style="font-weight:700; color:var(--color-text);">${teamName}</div>
+                      <div style="font-weight:700; color:var(--color-text);">${teamLabelHtml(team)}</div>
                       <div style="font-size:11px; color:#64748b;">${speakers}</div>
                     </div>
                     <span onclick="window.tcUpdateTeamField('${teamId}', 'name', '${teamNameJs}')" style="color:#94a3b8; cursor:pointer;">${icon('pencil', 12)}</span>
@@ -228,8 +370,10 @@ export async function renderTeams(container) {
           <input type="text" placeholder="Search teams..." style="width:100%; padding:10px 12px 10px 40px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; outline:none; transition:border 0.2s;">
         </div>
         <div style="display:flex; gap:12px; align-items:center;">
-          <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
-          <button onclick="document.getElementById('add-team-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Team</button>
+          ${isUserAdmin ? `
+            <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
+            <button onclick="document.getElementById('add-team-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Team</button>
+          ` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}
         </div>
       </div>
 
@@ -238,6 +382,14 @@ export async function renderTeams(container) {
         <div style="background:white; border-radius:12px; padding:24px 32px; width:500px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1);">
           <h2 style="font-size:20px; font-weight:700; margin-bottom:24px;">Manual Team Entry</h2>
           <form id="manual-team-form" onsubmit="return window.tcSaveTeam(event)" style="display:flex; flex-direction:column; gap:16px;">
+            <div class="form-group">
+              <label class="form-label">Emoji Mascot</label>
+              <input id="team-emoji-input" type="hidden" name="emoji" value="${DEFAULT_TEAM_EMOJI}">
+              <button type="button" onclick="window.tcOpenEmojiPicker('', document.getElementById('team-emoji-input').value)" style="height:44px; width:100%; border:1px solid var(--color-border-strong); border-radius:8px; background:white; display:flex; align-items:center; justify-content:space-between; padding:0 12px; cursor:pointer;">
+                <span style="display:flex; align-items:center; gap:10px;"><span id="team-emoji-preview" class="google-emoji" style="font-size:22px;">${DEFAULT_TEAM_EMOJI}</span><span>Choose mascot</span></span>
+                ${icon('chevronDown', 16)}
+              </button>
+            </div>
             <div class="form-group"><label class="form-label">Team Name</label><input name="name" required class="form-input"></div>
             <div class="form-group"><label class="form-label">Institution</label><input name="institution" class="form-input"></div>
             <div class="grid-2">

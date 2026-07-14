@@ -133,6 +133,9 @@ function createTournamentSidebar(activePath, user, tournament) {
         <a href="#/tournament/team-break" class="sidebar__link ${activePath === '/tournament/team-break' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('award')}</span> Team break
         </a>
+        <a href="#/tournament/adjudicator-break" class="sidebar__link ${activePath === '/tournament/adjudicator-break' ? 'active' : ''}">
+          <span class="sidebar__link-icon">${icon('gavel')}</span> Adjudicator break
+        </a>
         <a href="#/tournament/publish" class="sidebar__link ${activePath === '/tournament/publish' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('share')}</span> Publish & Live URL
         </a>
@@ -157,7 +160,7 @@ function createTournamentSidebar(activePath, user, tournament) {
           <span class="sidebar__link-icon">${icon('barChart')}</span> Speaker tab
         </a>
         <a href="#/tournament/team-standings" class="sidebar__link ${activePath === '/tournament/team-standings' ? 'active' : ''}">
-          <span class="sidebar__link-icon">${icon('list')}</span> Team standings
+          <span class="sidebar__link-icon">${icon('trophy')}</span> Rankings
         </a>
       </div>
 

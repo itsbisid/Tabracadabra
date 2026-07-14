@@ -113,9 +113,9 @@ export async function renderProfile(container) {
 
     <div class="card" style="border: 1px solid #fee2e2; background: #fffcfc;">
       <h3 style="font-size: 1rem; font-weight: 800; margin-bottom: 8px; color: var(--color-danger);">Danger Zone</h3>
-      <p style="color: var(--color-text-muted); font-size: 0.9rem; margin-bottom: 20px;">Once you delete your account, there is no going back. This will revoke all access and sign you out permanently.</p>
+      <p style="color: var(--color-text-muted); font-size: 0.9rem; margin-bottom: 20px;">Once you delete your account, there is no going back. This will delete tournaments you own, remove your organizer memberships, erase pending registration submissions tied to your email, anonymize your speaker or adjudicator details in other tournaments, and revoke your login.</p>
       <div style="display:flex; justify-content:flex-start;">
-        <button id="delete-account" class="btn btn--danger" style="background:#ef4444; border:none; transition:opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">${icon('trash', 16)} Delete Account & Sign Out</button>
+        <button id="delete-account" class="btn btn--danger" style="background:#ef4444; border:none; transition:opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">${icon('trash', 16)} Delete Account Permanently</button>
       </div>
     </div>
   `;
@@ -153,21 +153,34 @@ export async function renderProfile(container) {
   // Wire Delete Account
   const deleteBtn = container.querySelector('#delete-account');
   deleteBtn.addEventListener('click', async () => {
-    if (confirm('Are you absolutely sure? This will sign you out and you will legacy-lose access to this account profile.')) {
-      deleteBtn.innerHTML = 'Signing out...';
-      deleteBtn.disabled = true;
-      
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        alert(error.message);
-        deleteBtn.innerHTML = 'Delete Account & Sign Out';
-        deleteBtn.disabled = false;
-      } else {
-        localStorage.clear();
-        sessionStorage.clear();
-        window.location.hash = '/';
-        window.location.reload();
-      }
+    const confirmed = confirm('Delete your account permanently? This will delete tournaments you own, remove your organizer memberships, anonymize your personal participant details in other tournaments, and revoke your login. This cannot be undone.');
+    if (!confirmed) return;
+
+    deleteBtn.innerHTML = 'Deleting account...';
+    deleteBtn.disabled = true;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('You must be signed in to delete your account.');
+
+      const response = await fetch('/api/delete-account', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Could not delete your account.');
+
+      await supabase.auth.signOut().catch(() => {});
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.hash = '/';
+      window.location.reload();
+    } catch (error) {
+      alert(error.message || 'Could not delete your account.');
+      deleteBtn.innerHTML = `${icon('trash', 16)} Delete Account Permanently`;
+      deleteBtn.disabled = false;
     }
   });
 }

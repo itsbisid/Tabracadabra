@@ -1,7 +1,8 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
-import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { clearActiveTournamentId, requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { deleteTournament } from '../../lib/tournament-service.js';
 
 export async function renderSettings(container) {
   const tournamentId = requireActiveTournamentId();
@@ -62,10 +63,27 @@ export async function renderSettings(container) {
   };
 
   window.tcDeleteTournament = async () => {
-    if (confirm('CRITICAL: This will permanently delete ALL data for this tournament. Truly proceed?')) {
-      const { error } = await supabase.from('tournaments').delete().eq('id', tournamentId);
-      if (error) alert(error.message);
-      else window.tcNavigate('/dashboard');
+    const confirmed = confirm('Delete this tournament permanently? This removes only this tournament and its data. Your account and other tournaments will remain active. This cannot be undone.');
+    if (!confirmed) return;
+
+    const btn = document.getElementById('delete-tournament-btn');
+    const originalText = btn?.innerHTML;
+    if (btn) {
+      btn.innerHTML = 'Deleting...';
+      btn.disabled = true;
+    }
+
+    try {
+      await deleteTournament(tournamentId);
+      clearActiveTournamentId();
+      alert('Tournament deleted. Your account and other tournaments are unchanged.');
+      window.tcNavigate('/my-tournaments');
+    } catch (error) {
+      alert(error.message || 'Could not delete this tournament.');
+      if (btn) {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }
     }
   };
 
@@ -119,8 +137,8 @@ export async function renderSettings(container) {
           <!-- DANGER ZONE -->
           <div class="card" style="padding:24px; border:1px solid #fee2e2; background:#fffafb;">
             <h3 style="font-weight:800; font-size:16px; color:#ef4444; margin-bottom:8px;">Danger Zone</h3>
-            <p style="color:#64748b; font-size:13px; margin-bottom:20px;">Once you delete a tournament, there is no going back. Please be certain.</p>
-            <button class="btn" style="background:#ef4444; color:white; font-weight:700; width:100%;" onclick="window.tcDeleteTournament()">Delete Tournament Permanently</button>
+            <p style="color:#64748b; font-size:13px; margin-bottom:20px;">This permanently deletes only this tournament and its data. Your account and other tournaments remain active.</p>
+            <button id="delete-tournament-btn" class="btn" style="background:#ef4444; color:white; font-weight:700; width:100%;" onclick="window.tcDeleteTournament()">Delete Tournament Permanently</button>
           </div>
         </div>
 

@@ -3,6 +3,8 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml } from '../../lib/html.js';
+import { teamLabelHtml } from '../../lib/team-display.js';
+import { fetchVisibleStandingsBallots } from '../../lib/visible-results.js';
 
 export async function renderTeamBreak(container) {
   const tournamentId = requireActiveTournamentId();
@@ -26,9 +28,11 @@ export async function renderTeamBreak(container) {
   };
 
   const fetchAndRender = async () => {
-    const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', tournamentId).single();
-    const { data: teams } = await supabase.from('teams').select('*').eq('tournament_id', tournamentId);
-    const { data: ballots } = await supabase.from('ballots').select('*').eq('tournament_id', tournamentId);
+    const [{ data: tournament }, { data: teams }, ballots] = await Promise.all([
+      supabase.from('tournaments').select('*').eq('id', tournamentId).single(),
+      supabase.from('teams').select('*').eq('tournament_id', tournamentId),
+      fetchVisibleStandingsBallots(tournamentId)
+    ]);
 
     const persistedSize = Number(tournament?.break_size ?? tournament?.settings?.break_size);
     if (Number.isFinite(persistedSize) && persistedSize > 0) breakSize = persistedSize;
@@ -76,7 +80,7 @@ export async function renderTeamBreak(container) {
         <tr style="border-bottom:1px solid #f1f5f9; background:${inBreak ? '#f0fdf4' : 'white'};">
           <td style="padding:14px 16px; font-weight:800; color:${inBreak ? '#059669' : '#64748b'};">#${rank}</td>
           <td style="padding:14px 16px;">
-            <div style="font-weight:700;">${escapeHtml(s.name || 'Unnamed team')}</div>
+            <div style="font-weight:700;">${teamLabelHtml(s)}</div>
             <div style="font-size:11px; color:#64748b;">${escapeHtml(s.institution || '')}</div>
           </td>
           <td style="padding:14px 16px; text-align:center;"><span style="background:var(--color-primary); color:white; font-weight:700; padding:2px 10px; border-radius:99px; min-width:28px; display:inline-block;">${s.points}</span></td>
