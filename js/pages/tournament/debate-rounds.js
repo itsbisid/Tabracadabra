@@ -348,15 +348,34 @@ export async function renderDebateRounds(container) {
       return;
     }
 
+    const existing = currentRounds.find(round => round.id === roundId);
+    let motionText = String(existing?.motion_text || '').trim();
+    if (!motionText) {
+      const enteredMotion = prompt('No motion is set for this round yet. Enter the motion text to release:');
+      if (enteredMotion === null) return;
+      motionText = enteredMotion.trim();
+      if (!motionText) {
+        alert('Add a motion before releasing it to private portals.');
+        return;
+      }
+    }
+
     const prepTime = prompt('Enter prep time in minutes:', defaultPrep);
     if (prepTime === null) return;
+    const parsedPrep = Number.parseInt(prepTime, 10);
+    const prepMinutes = Number.isInteger(parsedPrep) && parsedPrep > 0 ? parsedPrep : defaultPrep;
 
     const { data: round, error } = await supabase.from('rounds').update({
+      motion_text: motionText,
       motion_released_at: new Date().toISOString(),
-      prep_time_override: parseInt(prepTime, 10) || defaultPrep
+      prep_time_override: prepMinutes
     }).eq('id', roundId).select('name, round_num, motion_text').single();
 
-    if (error) alert(error.message);
+    if (error) {
+      alert(isMissingColumn(error, 'motion_released_at') || isMissingColumn(error, 'prep_time_override')
+        ? 'The database is missing motion release fields. Run supabase/round-controls-and-results.sql in Supabase, then try releasing the motion again.'
+        : error.message);
+    }
     else {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
@@ -367,6 +386,7 @@ export async function renderDebateRounds(container) {
           body: round?.motion_text || 'The motion is now available in your private portal.'
         }).catch(pushError => console.warn('Push notification failed:', pushError));
       }
+      alert('Motion released to team and adjudicator private URLs.');
       fetchAndRender();
     }
   };

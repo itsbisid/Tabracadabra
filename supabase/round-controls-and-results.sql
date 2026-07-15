@@ -10,6 +10,15 @@ alter table if exists public.rounds
 alter table if exists public.rounds
   add column if not exists results_released boolean not null default false;
 
+alter table if exists public.rounds
+  add column if not exists motion_info text;
+
+alter table if exists public.rounds
+  add column if not exists motion_released_at timestamptz;
+
+alter table if exists public.rounds
+  add column if not exists prep_time_override integer;
+
 -- Preserve the visibility of historical completed blind rounds when upgrading.
 update public.rounds
 set results_released = true
@@ -31,5 +40,11 @@ comment on column public.rounds.room_names is
   'Ordered room names used when generating pairings for this round.';
 comment on column public.rounds.results_released is
   'Whether a blind round contributes to public standings.';
+comment on column public.rounds.motion_info is
+  'Optional infoslide or context displayed with the motion.';
+comment on column public.rounds.motion_released_at is
+  'Timestamp when the motion was released to participant private portals.';
+comment on column public.rounds.prep_time_override is
+  'Prep time in minutes for the released motion countdown.';
 
 notify pgrst, 'reload schema';
