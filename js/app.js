@@ -31,6 +31,7 @@ import { supabase } from './lib/supabase.js';
 import { signOut } from './lib/auth-utils.js';
 import { getActiveTournamentId } from './lib/tournament-context.js';
 import { renderPrivatePortal } from './pages/private-portal.js';
+import { renderPublicLive } from './pages/public-live.js';
 
 const routes = {
   '/': renderLogin,
@@ -86,6 +87,13 @@ async function router() {
       app.innerHTML = '';
       module.renderPublicRegistration(app, token);
     });
+    return;
+  }
+
+  if (routePath.startsWith('/live/')) {
+    const tournamentId = routePath.split('/live/')[1];
+    app.innerHTML = '';
+    renderPublicLive(app, tournamentId);
     return;
   }
 

@@ -1,133 +1,152 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
-import { tournamentDetail } from '../../data/mock-data.js';
+import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { escapeHtml } from '../../lib/html.js';
+import { isAdmin } from '../../lib/auth-helpers.js';
 
-export function renderPublish(container) {
-  window.tcAlert = (msg) => alert(msg);
-  window.renderPublishRefresh = () => renderPublish(container);
+function statusPill(enabled) {
+  return `<span style="background:${enabled ? '#ecfdf5' : '#fff7ed'}; color:${enabled ? '#047857' : '#c2410c'}; border-radius:999px; padding:5px 10px; font-size:11px; font-weight:900;">${enabled ? 'Published' : 'Hidden'}</span>`;
+}
 
-  window.togglePublishSection = (section) => {
-    tournamentDetail.publishSections[section] = !tournamentDetail.publishSections[section];
-    window.renderPublishRefresh();
+export async function renderPublish(container) {
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
+
+  let tournament = {};
+  let isUserAdmin = false;
+
+  const liveUrl = `${window.location.origin}/#/live/${tournamentId}`;
+
+  const fetchAndRender = async () => {
+    const [
+      { data: tournamentData },
+      { data: rounds },
+      { data: pairings },
+      { data: ballots },
+      adminAllowed
+    ] = await Promise.all([
+      supabase.from('tournaments').select('*').eq('id', tournamentId).single(),
+      supabase.from('rounds').select('id, name, round_num, motion_text, status, is_blind, results_released').eq('tournament_id', tournamentId).order('round_num', { ascending: true }),
+      supabase.from('draw_pairings').select('id').eq('tournament_id', tournamentId),
+      supabase.from('ballots').select('id, pairing_id').eq('tournament_id', tournamentId),
+      isAdmin(tournamentId)
+    ]);
+
+    tournament = tournamentData || {};
+    isUserAdmin = adminAllowed;
+    renderUI(rounds || [], pairings || [], ballots || []);
   };
 
-  const isChecked = (section) => tournamentDetail.publishSections[section];
+  window.tcTogglePublicTab = async (shouldRelease) => {
+    if (!isUserAdmin) {
+      alert('Only tournament admins can publish or hide the live page.');
+      return;
+    }
 
-  const getToggleCard = (key, title, desc) => `
-    <div onclick="window.togglePublishSection('${key}')" style="border:1px solid ${isChecked(key) ? '#c084fc' : 'var(--color-border)'}; background:${isChecked(key) ? '#faf5ff' : 'white'}; border-radius:8px; padding:16px; display:flex; gap:16px; cursor:pointer; align-items:flex-start;">
-      <div style="width:18px; height:18px; border-radius:4px; border:1px solid ${isChecked(key) ? '#2563eb' : 'var(--color-border-strong)'}; background:${isChecked(key) ? '#2563eb' : 'white'}; display:flex; align-items:center; justify-content:center; color:white; flex-shrink:0;">
-        ${isChecked(key) ? icon('check', 14) : ''}
-      </div>
-      <div>
-        <div style="font-weight:700; font-size:14px; color:var(--color-text); margin-bottom:4px;">${title}</div>
-        <div style="font-size:12px; color:var(--color-text-muted); line-height:1.4;">${desc}</div>
-      </div>
-    </div>
-  `;
+    const text = shouldRelease
+      ? 'Publish the live page now? Standings and motions will be visible to anyone with the link.'
+      : 'Hide the live page now? Visitors with the link will see a not-published message.';
+    if (!confirm(text)) return;
 
-  const content = `
-    <!-- Top Header -->
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px;">
-      <div>
-        <h1 style="font-size:32px; font-weight:800; color:var(--color-text); margin-bottom:8px; line-height:1.2;">Publish & Live URL</h1>
-        <div style="font-size:14px; color:var(--color-text-muted); max-width:800px; line-height:1.5;">
-          Generate a public Live URL with selectable tabs—draw, standings, results, motions, check-in, feedback. Linked to the public tournament view. Revoke anytime.
+    const { error } = await supabase
+      .from('tournaments')
+      .update({ is_tab_released: shouldRelease })
+      .eq('id', tournamentId);
+
+    if (error) alert(error.message);
+    else fetchAndRender();
+  };
+
+  window.tcCopyLiveUrl = () => {
+    navigator.clipboard.writeText(liveUrl).then(() => alert('Live URL copied.'));
+  };
+
+  const renderUI = (rounds, pairings, ballots) => {
+    const released = Boolean(tournament.is_tab_released);
+    const completedRounds = rounds.filter(round => String(round.status || '').toLowerCase() === 'completed').length;
+    const roundsWithMotions = rounds.filter(round => round.motion_text).length;
+    const expectedBallots = pairings.length * 4;
+    const ballotPct = expectedBallots ? Math.round((ballots.length / expectedBallots) * 100) : 0;
+    const warnings = [
+      !rounds.length ? 'No rounds have been created yet.' : '',
+      pairings.length && ballotPct < 100 ? `Only ${ballotPct}% of expected team ballots are in.` : '',
+      rounds.some(round => round.is_blind && !round.results_released) ? 'Some blind-round results are still withheld from standings.' : '',
+      !roundsWithMotions ? 'No motions are available for the public page yet.' : ''
+    ].filter(Boolean);
+
+    const content = `
+      <div style="display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:24px; align-items:start;">
+        <div style="display:grid; gap:20px;">
+          <section class="card" style="padding:24px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
+              <div>
+                <h2 style="font-size:20px; font-weight:900; color:#172033; margin:0 0 5px;">Public live page</h2>
+                <p style="font-size:13px; color:#64748b; margin:0; max-width:640px;">One simple public link for standings and motions. This is the Tabra-sized version of CalicoTab publishing.</p>
+              </div>
+              ${statusPill(released)}
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:14px; margin-bottom:20px;">
+              <div style="border:1px solid #e2e8f0; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Completed rounds</div>
+                <div style="font-size:24px; font-weight:900;">${completedRounds}/${rounds.length}</div>
+              </div>
+              <div style="border:1px solid #e2e8f0; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Ballot completion</div>
+                <div style="font-size:24px; font-weight:900;">${ballotPct}%</div>
+              </div>
+              <div style="border:1px solid #e2e8f0; border-radius:8px; padding:14px;">
+                <div style="font-size:12px; color:#64748b; margin-bottom:6px;">Motions set</div>
+                <div style="font-size:24px; font-weight:900;">${roundsWithMotions}/${rounds.length}</div>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              ${released
+                ? `<button class="btn btn--danger" onclick="window.tcTogglePublicTab(false)">${icon('eyeOff', 15)} Hide live page</button>`
+                : `<button class="btn btn--primary" onclick="window.tcTogglePublicTab(true)">${icon('eye', 15)} Publish live page</button>`}
+              <button class="btn btn--outline" onclick="window.tcCopyLiveUrl()">${icon('copy', 15)} Copy URL</button>
+              <a class="btn btn--outline" href="#/live/${escapeHtml(tournamentId)}" target="_blank" style="display:inline-flex; align-items:center; gap:8px;">${icon('monitor', 15)} Open preview</a>
+            </div>
+          </section>
+
+          <section class="card" style="padding:24px;">
+            <h3 style="font-size:16px; font-weight:900; color:#172033; margin:0 0 12px;">Live URL</h3>
+            <div style="display:flex; gap:10px;">
+              <input class="form-input" readonly value="${escapeHtml(liveUrl)}" style="font-family:monospace; font-size:13px;">
+              <button class="btn btn--outline" onclick="window.tcCopyLiveUrl()">${icon('copy', 15)}</button>
+            </div>
+          </section>
         </div>
+
+        <aside style="display:grid; gap:16px;">
+          <section class="card" style="padding:20px; border-color:${warnings.length ? '#fed7aa' : '#bbf7d0'}; background:${warnings.length ? '#fff7ed' : '#f8fffb'};">
+            <div style="display:flex; gap:10px; align-items:flex-start;">
+              <div style="color:${warnings.length ? '#d97706' : '#059669'};">${icon(warnings.length ? 'alertCircle' : 'checkCircle', 18)}</div>
+              <div>
+                <h3 style="font-size:14px; font-weight:900; color:#172033; margin:0 0 8px;">Pre-publish check</h3>
+                ${warnings.length
+                  ? `<div style="display:grid; gap:8px;">${warnings.map(warning => `<div style="font-size:13px; color:#9a3412; line-height:1.45;">${escapeHtml(warning)}</div>`).join('')}</div>`
+                  : '<p style="font-size:13px; color:#047857; line-height:1.5; margin:0;">Everything important is ready to publish.</p>'}
+              </div>
+            </div>
+          </section>
+
+          <section class="card" style="padding:20px;">
+            <h3 style="font-size:14px; font-weight:900; color:#172033; margin:0 0 8px;">What appears publicly</h3>
+            <div style="display:grid; gap:8px; font-size:13px; color:#64748b;">
+              <div>${icon('trophy', 14)} Team standings</div>
+              <div>${icon('fileText', 14)} Released motions</div>
+              <div>${icon('users', 14)} Basic tournament counts</div>
+            </div>
+          </section>
+        </aside>
       </div>
-    </div>
+    `;
 
-    <!-- Main Container -->
-    <div style="border:1px solid var(--color-border); border-radius:12px; padding:24px; background:white; margin-bottom:24px;">
-      
-      <div style="margin-bottom:24px;">
-        <div style="display:flex; align-items:center; gap:8px; color:#9333ea; font-size:16px; font-weight:700; margin-bottom:4px;">
-          ${icon('link', 18)} Live URL link
-        </div>
-        <div style="font-size:13px; color:var(--color-text-muted);">
-          Pick exactly what you want on <b>one public page.</b> The audience switches tabs — no login. Use <b>Project</b> for screens.
-        </div>
-      </div>
+    renderAppLayout(container, '/tournament/publish', 'Publish & Live URL', 'Control the simple public results page.', content);
+  };
 
-      <div style="font-size:11px; font-weight:700; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:12px;">Selections on the public page</div>
-      
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:32px;">
-        ${getToggleCard('liveDraw', 'Live draw', 'Pairings — pick one or many rounds on the draw tab')}
-        ${getToggleCard('teamStandings', 'Team standings', 'Live tab — tournament-wide table')}
-        ${getToggleCard('breakResults', 'Break results', 'Published break lists (including ineligible markers)')}
-        ${getToggleCard('motions', 'Motions', 'Motions linked to the selected round')}
-        ${getToggleCard('checkIn', 'Check-in', 'Teams and adjudicators checked in for the round')}
-        ${getToggleCard('feedback', 'Feedback', 'Confirmed feedback submissions vs active judges')}
-        ${getToggleCard('results', 'Results', 'Round by round results with team rankings and speaker scores')}
-      </div>
-
-      <div style="font-size:11px; font-weight:700; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:12px;">Draw Tab — Which Rounds</div>
-      <div style="font-size:13px; color:var(--color-text-muted); margin-bottom:16px;">Audience can switch between these rounds inside the Draw tab (like the internal draw viewer).</div>
-      
-      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
-        <label style="font-size:12px; color:var(--color-text-muted);">Range</label>
-        <select style="border:1px solid var(--color-border); border-radius:6px; padding:6px 12px; font-size:13px; outline:none; background:white;">
-          <option>From</option>
-        </select>
-        <span style="color:var(--color-text-muted);">-</span>
-        <select style="border:1px solid var(--color-border); border-radius:6px; padding:6px 12px; font-size:13px; outline:none; background:white;">
-          <option>To</option>
-        </select>
-        <button style="border:1px solid var(--color-border); border-radius:6px; background:white; padding:6px 16px; font-size:13px; font-weight:600; color:var(--color-text); cursor:pointer;">Apply range</button>
-        <button style="border:1px solid var(--color-border); border-radius:6px; background:white; padding:6px 16px; font-size:13px; font-weight:600; color:var(--color-text); cursor:pointer;">All rounds</button>
-        <button style="border:1px solid transparent; background:transparent; font-size:13px; color:var(--color-primary); font-weight:600; cursor:pointer;">Clear</button>
-      </div>
-
-      <div style="display:flex; align-items:center; gap:16px; margin-bottom:32px;">
-        <label style="display:flex; align-items:center; gap:8px; font-size:14px; color:var(--color-text); background:#f8fafc; border:1px solid var(--color-border); padding:8px 16px; border-radius:8px; flex:1;">
-          <input type="checkbox" checked style="accent-color:#2563eb;"> R1 — Round 1
-        </label>
-        <label style="display:flex; align-items:center; gap:8px; font-size:14px; color:var(--color-text); background:#f8fafc; border:1px solid var(--color-border); padding:8px 16px; border-radius:8px; flex:1;">
-          <input type="checkbox" checked style="accent-color:#2563eb;"> R2 — Round 2
-        </label>
-      </div>
-
-      <label style="display:flex; align-items:center; gap:8px; font-size:14px; color:var(--color-text); margin-bottom:16px;">
-        <input type="checkbox" checked style="accent-color:#2563eb;"> Include blind rounds in standings (typical for hall screens)
-      </label>
-
-      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
-        <label style="font-size:13px; color:var(--color-text);">Optional title (shown at top of public page)</label>
-        <input type="text" value="SDFG" style="border:1px solid var(--color-border-strong); border-radius:6px; padding:8px 12px; font-size:14px; width:250px; outline:none;">
-      </div>
-
-      <button onclick="window.tcAlert('Hall board link generated!')" style="background:#0044b3; color:white; border:none; border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; cursor:pointer;">
-        ${icon('plus', 16)} Generate hall board link
-      </button>
-    </div>
-
-    <!-- Final Tab Section -->
-    <div style="border:1px solid var(--color-border); border-radius:12px; padding:24px; background:white; margin-bottom:24px;">
-      <h3 style="font-size:16px; font-weight:700; color:var(--color-text); margin-bottom:4px;">Final tab (full package)</h3>
-      <div style="font-size:13px; color:var(--color-text-muted); margin-bottom:24px;">
-        One public page with overview, official team tab (when the tournament is complete), speaker tab, round-by-round results, break lists, motions, and participant lists. Same audience controls as hall board.
-      </div>
-      
-      <label style="display:flex; align-items:center; gap:8px; font-size:14px; color:var(--color-text); margin-bottom:16px;">
-        <input type="checkbox" checked style="accent-color:#2563eb;"> Include blind rounds in tab data (typical for published tabs)
-      </label>
-
-      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
-        <label style="font-size:13px; color:var(--color-text);">Optional title (shown at top of public page)</label>
-        <input type="text" value="SDFG - Final tab" style="border:1px solid var(--color-border-strong); border-radius:6px; padding:8px 12px; font-size:14px; width:250px; outline:none;">
-      </div>
-
-      <button onclick="window.tcAlert('Final tab link generated!')" style="background:#0044b3; color:white; border:none; border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; cursor:pointer;">
-        ${icon('plus', 16)} Generate final tab link
-      </button>
-    </div>
-
-    <!-- Active Public Links -->
-    <div style="margin-bottom:100px;">
-      <h3 style="font-size:14px; font-weight:700; color:var(--color-text); margin-bottom:4px;">Active public links</h3>
-      <div style="font-size:12px; color:var(--color-text-muted); margin-bottom:12px;">Open for the room, or copy the projector URL. Deep-link a tab with <code>?tab=DRAW</code></div>
-      <div style="font-size:13px; color:var(--color-text-muted); font-style:italic;">No links yet.</div>
-    </div>
-  `;
-
-  renderAppLayout(container, '/tournament/publish', '', '', content);
+  fetchAndRender();
 }

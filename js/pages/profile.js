@@ -66,6 +66,14 @@ export async function renderProfile(container) {
               <label class="form-label">Email Address (Read Only)</label>
               <input type="email" class="form-input" value="${user.email}" readonly style="background:var(--color-bg); cursor:not-allowed;">
             </div>
+            <div class="form-group" style="grid-column: span 2;">
+              <label class="form-label">Tabra User ID</label>
+              <div style="display:flex; gap:10px; align-items:center;">
+                <input type="text" class="form-input" value="${user.id}" readonly style="background:var(--color-bg); cursor:not-allowed; font-family:monospace; font-size:13px;">
+                <button type="button" id="copy-user-id" class="btn btn--outline" style="white-space:nowrap;">${icon('copy', 15)} Copy ID</button>
+              </div>
+              <div style="font-size:12px; color:var(--color-text-muted); margin-top:6px;">Share this with a tournament director if they need to add you as an admin user.</div>
+            </div>
           </div>
           
           <div style="display:flex; justify-content:flex-end;">
@@ -148,6 +156,11 @@ export async function renderProfile(container) {
       alert('Profile updated! Local session refreshing...');
       window.location.reload();
     }
+  });
+
+  const copyIdBtn = container.querySelector('#copy-user-id');
+  copyIdBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(user.id).then(() => alert('User ID copied.'));
   });
 
   // Wire Delete Account

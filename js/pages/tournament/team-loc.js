@@ -1,168 +1,404 @@
 import { renderAppLayout } from '../../components/layout.js';
 import { icon } from '../../components/icons.js';
-import { tournamentDetail } from '../../data/mock-data.js';
+import { supabase } from '../../lib/supabase.js';
+import { requireActiveTournamentId } from '../../lib/tournament-context.js';
+import { escapeHtml, escapeJsString } from '../../lib/html.js';
+import { isAdmin } from '../../lib/auth-helpers.js';
 
-export function renderTeamLOC(container) {
-  if (!window.locRoles) {
-    window.locRoles = [
-      { id: 'tab_director', iconName: 'crown', bg: '#f3e8ff', color: '#9333ea', title: 'Tab Director', desc: 'Oversees tabulation, draw generation, and results integrity', 
-        assigned: [{ id: 1, name: 'Awinbisid Desmond-Bugbilla', email: 'awinbisid951@gmail.com' }], expanded: true },
-      { id: 'tab_staff', iconName: 'clipboard', bg: '#f3e8ff', color: '#9333ea', title: 'Tab Staff', desc: 'Assist with ballot entry, data verification, and tab operations', assigned: [], expanded: false },
-      { id: 'ps_director', iconName: 'mic', bg: '#fce7f3', color: '#db2777', title: 'Public Speaking Director', desc: 'Runs public speaking rounds and PS participants; in hybrid events, no access to debate tab', assigned: [], expanded: false },
-      { id: 'convenor', iconName: 'star', bg: '#dbeafe', color: '#2563eb', title: 'Convenor', desc: 'Lead tournament organizer responsible for overall coordination', assigned: [], expanded: false },
-      { id: 'deputy_convenor', iconName: 'userCog', bg: '#eff6ff', color: '#3b82f6', title: 'Deputy Convenor', desc: 'Supports the convenor with tournament logistics and decisions', assigned: [], expanded: false },
-      { id: 'chief_adj', iconName: 'gavel', bg: '#fef3c7', color: '#d97706', title: 'Chief Adjudicator', desc: 'Sets motions, manages adjudicator allocation and feedback', assigned: [], expanded: false },
-      { id: 'deputy_chief_adj', iconName: 'gavel', bg: '#fef3c7', color: '#d97706', title: 'Deputy Chief Adjudicator', desc: 'Assists CA with motions, allocation, and adjudicator training', assigned: [], expanded: false },
-      { id: 'equity_officer', iconName: 'scales', bg: '#fee2e2', color: '#dc2626', title: 'Equity Officer', desc: 'Handles equity complaints, ensures safe and inclusive environment', assigned: [], expanded: false },
-      { id: 'equity_committee', iconName: 'scales', bg: '#fee2e2', color: '#dc2626', title: 'Equity Committee', desc: 'Supports equity officer in handling complaints and policy', assigned: [], expanded: false },
-      { id: 'registration_officer', iconName: 'clipboardCheck', bg: '#d1fae5', color: '#059669', title: 'Registration Officer', desc: 'Manages participant registration, check-in, and credentials', assigned: [], expanded: false }
-    ];
+const ADMIN_ROLES = new Set(['Director', 'Tab Director', 'Convenor', 'Deputy Convenor']);
+
+const ROLE_OPTIONS = [
+  {
+    value: 'Director',
+    title: 'Director',
+    group: 'Admin access',
+    desc: 'Full tournament administration, including users, rounds, rosters, and settings.',
+    iconName: 'crown',
+    color: '#7c3aed',
+    bg: '#f5f3ff'
+  },
+  {
+    value: 'Tab Director',
+    title: 'Tab Director',
+    group: 'Admin access',
+    desc: 'Runs tab operations, draws, ballots, standings, and publish controls.',
+    iconName: 'clipboard',
+    color: '#2563eb',
+    bg: '#eff6ff'
+  },
+  {
+    value: 'Convenor',
+    title: 'Convenor',
+    group: 'Admin access',
+    desc: 'Manages tournament logistics, registration, venues, and public communication.',
+    iconName: 'star',
+    color: '#0891b2',
+    bg: '#ecfeff'
+  },
+  {
+    value: 'Deputy Convenor',
+    title: 'Deputy Convenor',
+    group: 'Admin access',
+    desc: 'Supports convening work and can administer tournament data.',
+    iconName: 'userCog',
+    color: '#0f766e',
+    bg: '#f0fdfa'
+  },
+  {
+    value: 'Chief Adjudicator',
+    title: 'Chief Adjudicator',
+    group: 'Listed role',
+    desc: 'Shown as part of the organizing team. This role does not grant admin rights yet.',
+    iconName: 'gavel',
+    color: '#b45309',
+    bg: '#fffbeb'
+  },
+  {
+    value: 'Equity Officer',
+    title: 'Equity Officer',
+    group: 'Listed role',
+    desc: 'Shown as part of the organizing team. This role does not grant admin rights yet.',
+    iconName: 'scales',
+    color: '#be123c',
+    bg: '#fff1f2'
+  },
+  {
+    value: 'Registration Officer',
+    title: 'Registration Officer',
+    group: 'Listed role',
+    desc: 'Shown as part of the organizing team. This role does not grant admin rights yet.',
+    iconName: 'clipboardCheck',
+    color: '#059669',
+    bg: '#ecfdf5'
   }
+];
 
-  window.renderTeamLOCRefresh = () => renderTeamLOC(container);
+function roleMeta(role) {
+  return ROLE_OPTIONS.find(option => option.value === role) || ROLE_OPTIONS[1];
+}
 
-  window.toggleRoleExpanded = (idx) => {
-    window.locRoles[idx].expanded = !window.locRoles[idx].expanded;
-    window.renderTeamLOCRefresh();
-  };
+function hasAdminAccess(role) {
+  return ADMIN_ROLES.has(String(role || '').trim());
+}
 
-  window.removeAssignedPerson = (roleIdx, personIdx) => {
-    if(confirm('Are you sure you want to remove this person from the role?')) {
-      window.locRoles[roleIdx].assigned.splice(personIdx, 1);
-      window.renderTeamLOCRefresh();
+function shortUserId(userId = '') {
+  return userId ? `${userId.slice(0, 8)}...${userId.slice(-6)}` : 'Unknown user';
+}
+
+function isUuid(value = '') {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+export async function renderTeamLOC(container) {
+  const tournamentId = requireActiveTournamentId();
+  if (!tournamentId) return;
+
+  let memberships = [];
+  let tournament = null;
+  let sessionUser = null;
+  let isUserAdmin = false;
+
+  const fetchAndRender = async () => {
+    const [{ data: sessionData }, { data: tournamentData }, adminAllowed] = await Promise.all([
+      supabase.auth.getSession(),
+      supabase.from('tournaments').select('id, name, short_name, owner_id').eq('id', tournamentId).single(),
+      isAdmin(tournamentId)
+    ]);
+
+    sessionUser = sessionData?.session?.user || null;
+    tournament = tournamentData || {};
+    isUserAdmin = adminAllowed;
+
+    let { data, error } = await supabase
+      .from('tournament_memberships')
+      .select('id, tournament_id, user_id, role, created_at')
+      .eq('tournament_id', tournamentId)
+      .order('created_at', { ascending: true });
+
+    if (error && String(error.message || '').toLowerCase().includes('created_at')) {
+      ({ data, error } = await supabase
+        .from('tournament_memberships')
+        .select('id, tournament_id, user_id, role')
+        .eq('tournament_id', tournamentId));
     }
-  };
 
-  window.submitAssignRole = (e) => {
-    e.preventDefault();
-    const name = document.getElementById('assign-name').value || 'Unnamed Person';
-    const email = document.getElementById('assign-email').value || 'No email provided';
-    const roleId = document.getElementById('assign-role-select').value;
-    
-    // Find the role and push assignment
-    const roleIdx = window.locRoles.findIndex(r => r.id === roleId);
-    if(roleIdx > -1) {
-      window.locRoles[roleIdx].assigned.push({ id: Date.now(), name, email });
-      window.locRoles[roleIdx].expanded = true; // Auto expand so they see it
+    if (error) {
+      renderError(error);
+      return;
     }
-    
-    document.getElementById('assign-role-modal').style.display = 'none';
-    window.renderTeamLOCRefresh();
+
+    memberships = data || [];
+    renderUI();
   };
 
-  const rolesHtml = window.locRoles.map((role, idx) => `
-    <div style="background:white; border:1px solid var(--color-border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-      <div onclick="if(${role.assigned.length} > 0) window.toggleRoleExpanded(${idx})" style="padding:16px; display:flex; gap:16px; align-items:flex-start; flex:1; cursor:${role.assigned.length > 0 ? 'pointer' : 'default'}">
-        <div style="width:32px; height:32px; border-radius:50%; background:${role.bg}; color:${role.color}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-          ${icon(role.iconName, 16)}
+  const renderError = (error) => {
+    renderAppLayout(
+      container,
+      '/tournament/team-loc',
+      'Admin users',
+      'Manage people who can help run the tournament.',
+      `
+        <div class="card" style="padding:24px; border-color:#fed7aa; background:#fff7ed;">
+          <h3 style="font-size:16px; font-weight:900; color:#9a3412; margin:0 0 8px;">Could not load admin users</h3>
+          <p style="font-size:13px; color:#9a3412; margin:0;">${escapeHtml(error.message || 'Check your permissions and database policies.')}</p>
         </div>
-        <div style="flex:1;">
-          <div style="font-weight:700; font-size:14px; margin-bottom:2px; color:var(--color-text);">${role.title}</div>
-          <div style="font-size:12px; color:var(--color-text-muted); line-height:1.4;">${role.desc}</div>
-        </div>
-        ${role.assigned.length > 0 ? `
-          <div style="background:#f1f5f9; padding:2px 8px; border-radius:12px; font-size:12px; font-weight:600; color:var(--color-text); display:flex; align-items:center; gap:4px; border:1px solid var(--color-border);">
-            ${role.assigned.length} <div style="display:flex; align-items:center; justify-content:center; width:14px; height:14px; color:var(--color-text-muted);">${role.expanded ? icon('chevronUp', 14) : icon('chevronDown', 14)}</div>
-          </div>
-        ` : ''}
+      `
+    );
+  };
+
+  window.tcCopyAdminInvite = () => {
+    const name = tournament?.short_name || tournament?.name || 'the tournament';
+    const message = [
+      `You have been invited to help administer ${name} on Tabra.`,
+      '',
+      '1. Sign in or create an account on Tabra.',
+      '2. Open Profile and copy your User ID.',
+      '3. Send that User ID to the tournament director so they can grant your role.',
+      '',
+      `${window.location.origin}/#/login`
+    ].join('\n');
+
+    navigator.clipboard.writeText(message).then(() => alert('Invite instructions copied.'));
+  };
+
+  window.tcAddTournamentMember = async (event) => {
+    event.preventDefault();
+    if (!isUserAdmin) {
+      alert('Only tournament admins can add users.');
+      return false;
+    }
+
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    const userId = String(fd.get('user_id') || '').trim();
+    const role = String(fd.get('role') || 'Tab Director').trim();
+
+    if (!isUuid(userId)) {
+      alert('Paste a valid Tabra user ID. It should look like a UUID.');
+      return false;
+    }
+
+    const submit = form.querySelector('button[type="submit"]');
+    const originalText = submit?.innerHTML;
+    if (submit) {
+      submit.disabled = true;
+      submit.innerHTML = 'Adding...';
+    }
+
+    const { error } = await supabase
+      .from('tournament_memberships')
+      .upsert({
+        tournament_id: tournamentId,
+        user_id: userId,
+        role
+      }, { onConflict: 'tournament_id,user_id' });
+
+    if (error) {
+      alert(error.message);
+      if (submit) {
+        submit.disabled = false;
+        submit.innerHTML = originalText;
+      }
+      return false;
+    }
+
+    form.reset();
+    await fetchAndRender();
+    return false;
+  };
+
+  window.tcUpdateTournamentMemberRole = async (userId, role) => {
+    if (!isUserAdmin) {
+      alert('Only tournament admins can change roles.');
+      return;
+    }
+    if (userId === tournament?.owner_id) {
+      alert('The tournament owner keeps full director access.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('tournament_memberships')
+      .update({ role })
+      .eq('tournament_id', tournamentId)
+      .eq('user_id', userId);
+
+    if (error) alert(error.message);
+    else fetchAndRender();
+  };
+
+  window.tcRemoveTournamentMember = async (userId) => {
+    if (!isUserAdmin) {
+      alert('Only tournament admins can remove users.');
+      return;
+    }
+    if (userId === tournament?.owner_id) {
+      alert('The tournament owner cannot be removed here.');
+      return;
+    }
+    if (userId === sessionUser?.id && !confirm('Remove your own membership? If you are not the owner, you may lose access to this tournament.')) {
+      return;
+    }
+    if (!confirm('Remove this user from the tournament admin team?')) return;
+
+    const { error } = await supabase
+      .from('tournament_memberships')
+      .delete()
+      .eq('tournament_id', tournamentId)
+      .eq('user_id', userId);
+
+    if (error) alert(error.message);
+    else fetchAndRender();
+  };
+
+  const renderRoleCards = () => ROLE_OPTIONS.map(role => `
+    <div style="border:1px solid #e2e8f0; border-radius:8px; background:white; padding:14px; display:flex; gap:12px;">
+      <div style="width:34px; height:34px; border-radius:8px; background:${role.bg}; color:${role.color}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+        ${icon(role.iconName, 17)}
       </div>
-      
-      ${role.expanded && role.assigned.length > 0 ? `
-        <div style="border-top:1px solid var(--color-border);">
-          ${role.assigned.map((person, pIdx) => `
-            <div style="padding:12px 16px; display:flex; justify-content:space-between; align-items:center; border-bottom:${pIdx === role.assigned.length - 1 ? 'none' : '1px solid var(--color-border)'}; background:white;">
-              <div>
-                <div style="font-weight:600; font-size:13px; color:var(--color-text); display:flex; align-items:center; gap:6px;">
-                  ${person.name} <span style="color:var(--color-text-muted); cursor:pointer;">${icon('pen', 12)}</span>
-                </div>
-                <div style="font-size:12px; color:var(--color-text-muted); margin-top:2px;">${person.email}</div>
-              </div>
-              <button onclick="window.removeAssignedPerson(${idx}, ${pIdx})" style="background:none; border:none; color:var(--color-text-muted); cursor:pointer; padding:4px;" onmouseover="this.style.color='var(--color-danger)'" onmouseout="this.style.color='var(--color-text-muted)'">
-                ${icon('trash', 16)}
-              </button>
-            </div>
-          `).join('')}
+      <div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <strong style="font-size:13px; color:#172033;">${escapeHtml(role.title)}</strong>
+          <span style="background:${hasAdminAccess(role.value) ? '#ecfdf5' : '#f1f5f9'}; color:${hasAdminAccess(role.value) ? '#047857' : '#64748b'}; border-radius:999px; padding:2px 8px; font-size:10px; font-weight:900;">${hasAdminAccess(role.value) ? 'Admin' : 'Listed'}</span>
         </div>
-      ` : ''}
-
-      ${role.assigned.length === 0 ? `
-        <div style="padding:10px 16px; border-top:1px solid var(--color-border); font-size:11px; font-style:italic; color:var(--color-text-muted); background:white;">
-          No one assigned yet
-        </div>
-      ` : ''}
+        <div style="font-size:12px; color:#64748b; line-height:1.4; margin-top:4px;">${escapeHtml(role.desc)}</div>
+      </div>
     </div>
   `).join('');
 
-  const content = `
-    <!-- Top Custom Header -->
-    <div style="margin-bottom:24px;">
-      <h1 style="font-size:32px; font-weight:800; color:var(--color-text); margin-bottom:8px; line-height:1.2;">Team / LOC</h1>
-      <div style="font-size:14px; color:var(--color-text-muted); margin-bottom:24px;">Manage organizing committee roles and assignments</div>
-      
-      <div style="display:flex; gap:24px; align-items:center; color:var(--color-text-muted); font-size:12px; font-weight:600;">
-        <div style="display:flex; align-items:center; gap:6px;">${icon('shield', 14)} 1 role assignments</div>
-        <div style="display:flex; align-items:center; gap:6px;">${icon('users', 14)} 1 unique people</div>
-      </div>
-    </div>
+  const renderMemberRow = (member, owner = false) => {
+    const role = owner ? 'Director' : (member.role || 'Member');
+    const meta = roleMeta(role);
+    const userId = member.user_id;
+    const safeUserId = escapeJsString(userId);
+    const isSelf = userId === sessionUser?.id;
 
-    <!-- Grid -->
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; padding-bottom:100px;">
-      ${rolesHtml}
-    </div>
-
-    <!-- Floating Action Button -->
-    <div onclick="document.getElementById('assign-role-modal').style.display='flex'" style="position:fixed; bottom:32px; right:32px; height:56px; border-radius:28px; background:#0044b3; color:white; display:flex; align-items:center; justify-content:center; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); cursor:pointer; padding:0 24px; font-weight:600; font-size:15px; gap:8px; transition:transform 0.2s; z-index:100;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='none'">
-      ${icon('userPlus', 18)} Assign Role
-    </div>
-
-    <!-- Assign Role Modal -->
-    <div id="assign-role-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.4); z-index:9999; justify-content:center; align-items:center; backdrop-filter:blur(2px);" onclick="if(event.target.id === 'assign-role-modal') this.style.display='none'">
-      <div style="background:white; border-radius:12px; padding:24px 32px; width:460px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.1); font-family:var(--font-family);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
-          <h2 style="font-size:20px; font-weight:700; color:var(--color-text); margin:0;">Assign Role</h2>
-          <button onclick="document.getElementById('assign-role-modal').style.display='none'" style="background:none; border:none; cursor:pointer; color:var(--color-text-muted);">${icon('x', 20)}</button>
-        </div>
-        
-        <form onsubmit="window.submitAssignRole(event)" style="display:flex; flex-direction:column; gap:20px;">
-          
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            <label style="font-weight:600; font-size:14px; color:var(--color-text);">Email (optional)</label>
-            <input id="assign-email" type="email" placeholder="person@example.com" style="width:100%; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 12px; font-size:14px; outline:none;" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor='var(--color-border-strong)'">
-            <div style="font-size:12px; color:var(--color-text-muted); margin-top:2px;">Leave empty to create a temporary account and add email later.</div>
-          </div>
-          
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            <label style="font-weight:600; font-size:14px; color:var(--color-text);">Name (optional)</label>
-            <input id="assign-name" type="text" placeholder="Jane Smith" style="width:100%; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 12px; font-size:14px; outline:none;" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor='var(--color-border-strong)'">
-          </div>
-          
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            <label style="font-weight:600; font-size:14px; color:var(--color-text);">Role</label>
-            <div style="position:relative;">
-              <select id="assign-role-select" style="width:100%; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 12px; font-size:14px; outline:none; appearance:none; background:white; color:var(--color-text);" onfocus="this.style.borderColor='var(--color-primary)'" onblur="this.style.borderColor='var(--color-border-strong)'">
-                ${window.locRoles.map(r => `<option value="${r.id}">${r.title}</option>`).join('')}
-              </select>
-              <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); pointer-events:none; color:var(--color-text);">
-                ${icon('chevronDown', 16)}
+    return `
+      <tr style="border-bottom:1px solid #e2e8f0;">
+        <td style="padding:16px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:36px; height:36px; border-radius:8px; background:${meta.bg}; color:${meta.color}; display:flex; align-items:center; justify-content:center;">${icon(meta.iconName, 17)}</div>
+            <div>
+              <div style="font-weight:800; color:#172033;">
+                ${escapeHtml(owner ? 'Tournament owner' : shortUserId(userId))}
+                ${isSelf ? '<span style="color:#2563eb; font-size:11px; font-weight:900; margin-left:6px;">You</span>' : ''}
               </div>
+              <button onclick="navigator.clipboard.writeText('${safeUserId}').then(() => alert('User ID copied.'))" style="border:0; background:transparent; color:#64748b; cursor:pointer; font-size:12px; padding:0;">${escapeHtml(userId)}</button>
             </div>
           </div>
-          
-          <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:8px;">
-            <button type="button" onclick="document.getElementById('assign-role-modal').style.display='none'" style="background:white; border:1px solid var(--color-border-strong); border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; color:var(--color-text); cursor:pointer;">Cancel</button>
-            <button type="submit" style="background:#0044b3; border:none; border-radius:8px; padding:10px 16px; font-weight:600; font-size:14px; color:white; cursor:pointer; display:flex; align-items:center; gap:8px;">${icon('userPlus', 16)} Assign Role</button>
-          </div>
-          
-        </form>
-      </div>
-    </div>
-  `;
+        </td>
+        <td style="padding:16px;">
+          ${owner ? `
+            <span style="background:#ecfdf5; color:#047857; border-radius:999px; padding:5px 10px; font-size:11px; font-weight:900;">Director</span>
+          ` : `
+            <select class="form-input form-select" style="max-width:230px;" onchange="window.tcUpdateTournamentMemberRole('${safeUserId}', this.value)" ${isUserAdmin ? '' : 'disabled'}>
+              ${ROLE_OPTIONS.map(option => `<option value="${escapeHtml(option.value)}" ${option.value === role ? 'selected' : ''}>${escapeHtml(option.title)}</option>`).join('')}
+            </select>
+          `}
+        </td>
+        <td style="padding:16px;">
+          <span style="background:${hasAdminAccess(role) ? '#ecfdf5' : '#fff7ed'}; color:${hasAdminAccess(role) ? '#047857' : '#c2410c'}; border-radius:999px; padding:5px 10px; font-size:11px; font-weight:900;">${hasAdminAccess(role) ? 'Can administer' : 'No admin rights'}</span>
+        </td>
+        <td style="padding:16px; text-align:right;">
+          ${owner ? '<span style="font-size:12px; color:#64748b;">Owner protected</span>' : (isUserAdmin ? `
+            <button class="btn btn--outline btn--sm" style="color:#ef4444; border-color:#fecaca;" onclick="window.tcRemoveTournamentMember('${safeUserId}')">${icon('trash', 14)} Remove</button>
+          ` : '')}
+        </td>
+      </tr>
+    `;
+  };
 
-  renderAppLayout(
-    container,
-    '/tournament/team-loc',
-    '', 
-    '',
-    content
-  );
+  const renderUI = () => {
+    const ownerRow = tournament?.owner_id
+      ? renderMemberRow({ user_id: tournament.owner_id, role: 'Director' }, true)
+      : '';
+    const memberRows = memberships
+      .filter(member => member.user_id !== tournament?.owner_id)
+      .map(member => renderMemberRow(member))
+      .join('');
+    const adminCount = new Set([
+      tournament?.owner_id,
+      ...memberships.filter(member => hasAdminAccess(member.role)).map(member => member.user_id)
+    ].filter(Boolean)).size;
+
+    const content = `
+      <div style="display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:24px; align-items:start;">
+        <div style="display:grid; gap:20px;">
+          <div class="card" style="padding:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px; flex-wrap:wrap;">
+              <div>
+                <h2 style="font-size:18px; font-weight:900; margin:0 0 4px; color:#172033;">Tournament users</h2>
+                <p style="font-size:13px; color:#64748b; margin:0;">Manage real admin access using the membership table.</p>
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <span style="background:#eff6ff; color:#1d4ed8; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:900;">${memberships.length + (tournament?.owner_id && !memberships.some(member => member.user_id === tournament.owner_id) ? 1 : 0)} users</span>
+                <span style="background:#ecfdf5; color:#047857; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:900;">${adminCount} admins</span>
+              </div>
+            </div>
+
+            <div style="overflow:auto; border:1px solid #e2e8f0; border-radius:8px;">
+              <table style="width:100%; border-collapse:collapse; font-size:14px;">
+                <thead style="background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+                  <tr>
+                    <th style="padding:12px 16px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase;">User</th>
+                    <th style="padding:12px 16px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase;">Role</th>
+                    <th style="padding:12px 16px; text-align:left; font-size:11px; color:#64748b; text-transform:uppercase;">Permission</th>
+                    <th style="padding:12px 16px;"></th>
+                  </tr>
+                </thead>
+                <tbody>${ownerRow}${memberRows || ''}</tbody>
+              </table>
+            </div>
+          </div>
+
+          ${isUserAdmin ? `
+            <form class="card" onsubmit="return window.tcAddTournamentMember(event)" style="padding:20px; display:grid; gap:16px;">
+              <div>
+                <h3 style="font-size:16px; font-weight:900; margin:0 0 4px;">Add admin user</h3>
+                <p style="font-size:13px; color:#64748b; margin:0;">Ask the person to sign in, copy their Profile user ID, then paste it here.</p>
+              </div>
+              <div style="display:grid; grid-template-columns:minmax(0,1fr) 230px; gap:14px;">
+                <label class="form-group">
+                  <span class="form-label">User ID</span>
+                  <input name="user_id" class="form-input" required placeholder="00000000-0000-0000-0000-000000000000">
+                </label>
+                <label class="form-group">
+                  <span class="form-label">Role</span>
+                  <select name="role" class="form-input form-select">
+                    ${ROLE_OPTIONS.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.title)}</option>`).join('')}
+                  </select>
+                </label>
+              </div>
+              <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
+                <button type="button" class="btn btn--outline" onclick="window.tcCopyAdminInvite()">${icon('copy', 15)} Copy invite instructions</button>
+                <button type="submit" class="btn btn--primary">${icon('userPlus', 15)} Add user</button>
+              </div>
+            </form>
+          ` : `
+            <div class="card" style="padding:20px; border-color:#fed7aa; background:#fff7ed; color:#9a3412; font-size:13px;">
+              You can view roles, but only tournament admins can change them.
+            </div>
+          `}
+        </div>
+
+        <aside style="display:grid; gap:16px;">
+          <div class="card" style="padding:18px; border-color:#bfdbfe; background:#f8fbff;">
+            <h3 style="font-size:15px; font-weight:900; color:#172033; margin:0 0 8px;">Simple permissions</h3>
+            <p style="font-size:13px; color:#475569; line-height:1.5; margin:0;">Tabra keeps this lighter than CalicoTab: four roles grant admin access, and the rest are displayed as organizing roles until finer permissions are added.</p>
+          </div>
+          <div style="display:grid; gap:10px;">${renderRoleCards()}</div>
+        </aside>
+      </div>
+    `;
+
+    renderAppLayout(
+      container,
+      '/tournament/team-loc',
+      'Admin users',
+      'Invite helpers, assign roles, and control who can administer this tournament.',
+      content
+    );
+  };
+
+  fetchAndRender();
 }

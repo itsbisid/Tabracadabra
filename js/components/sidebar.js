@@ -115,7 +115,7 @@ function createTournamentSidebar(activePath, user, tournament) {
           <span class="sidebar__link-icon">${icon('mic')}</span> Voice Rooms
         </a>
         <a href="#/tournament/team-loc" class="sidebar__link ${activePath === '/tournament/team-loc' ? 'active' : ''}">
-          <span class="sidebar__link-icon">${icon('shield')}</span> Team / LOC
+          <span class="sidebar__link-icon">${icon('shield')}</span> Admin Users
         </a>
         <a href="#/tournament/settings" class="sidebar__link ${activePath === '/tournament/settings' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('settings')}</span> Settings
