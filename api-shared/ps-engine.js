@@ -1,5 +1,9 @@
 // Public speaking rules. Shared by the API and tests; never trusts client totals.
 import { randomUUID } from 'node:crypto';
+import Decimal from 'decimal.js';
+import { validateRules, calculatePerformance, capacityPlan, EXAMPLE_PRESETS } from './ps-rules.js';
+
+export { EXAMPLE_PRESETS };
 
 export const DEFAULT_RUBRIC = [
   { name: 'Content', max: 40, weight: 40 },
@@ -17,37 +21,62 @@ const find = (items, id, label) => { const item = items.find(x => x.id === id); 
 const adminOnly = actor => assert(actor.role === 'admin', 'Only tournament administrators can do this.');
 const rounded = x => Math.round((x + Number.EPSILON) * 10000) / 10000;
 
+// All configurable rules are validated by ps-rules.js. Older events without the newer
+// settings fall back to the documented defaults there.
+const RULE_KEYS = ['rubric', 'scoring', 'aggregation', 'minHeat', 'maxHeat', 'panelSize', 'finalPanelSize', 'rankPolicy', 'feedbackPolicy', 'timezone',
+  'preliminaryRounds', 'breakSize', 'durationSeconds', 'preparationSeconds', 'graceSeconds', 'changeoverSeconds', 'deliberationSeconds', 'travelSeconds',
+  'roomCount', 'precision', 'feedbackDeadline', 'penalty'];
 function settings(input) {
-  const rubric = input.rubric || DEFAULT_RUBRIC;
-  assert(Array.isArray(rubric) && rubric.length > 0 && rubric.length <= 12, 'Use between 1 and 12 scoring criteria.');
-  const clean = rubric.map(c => ({ name: required(c.name), max: integer(c.max, 1, 1000), weight: integer(c.weight, 1, 100) }));
-  assert(clean.reduce((sum, c) => sum + c.weight, 0) === 100, 'Criterion weights must add up to 100.');
-  assert(new Set(clean.map(c => c.name.toLowerCase())).size === clean.length, 'Criterion names must be unique.');
-  assert(['score', 'rank'].includes(input.scoring || 'score'), 'Choose score or rank tabulation.');
-  return { rubric: clean, scoring: input.scoring || 'score', durationSeconds: integer(input.durationSeconds ?? 180, 30, 3600) };
+  const rules = validateRules({ ...input, rubric: input.rubric || DEFAULT_RUBRIC });
+  return Object.fromEntries(RULE_KEYS.map(k => [k, rules[k]]));
+}
+const ruleCache = new WeakMap();
+export function rulesOf(event) {
+  if (!ruleCache.has(event)) ruleCache.set(event, validateRules({ ...event, rubric: event.rubric || DEFAULT_RUBRIC }));
+  return ruleCache.get(event);
+}
+
+// Read-only helpers for the setup screens: a hand-checkable sample ballot and a capacity estimate.
+export function previewRules(input, sampleScores) {
+  const rules = validateRules({ ...input, rubric: input.rubric || DEFAULT_RUBRIC });
+  const scores = sampleScores || rules.rubric.map(c => Number(new Decimal(c.max - c.min).mul(0.75).div(c.step).floor().mul(c.step).plus(c.min)));
+  const elapsedSeconds = rules.penalty.method === 'overtime' ? rules.durationSeconds + rules.graceSeconds + rules.penalty.stepSeconds : undefined;
+  return { rules, sample: { scores, elapsedSeconds, result: calculatePerformance(rules, { scores, elapsedSeconds }) } };
+}
+export function planCapacity(event, input = {}) {
+  const rules = rulesOf(event);
+  const entrants = input.entrants ?? event.speakers.filter(p => p.active).length;
+  const judges = input.judges ?? event.judges.filter(p => p.active).length;
+  const rooms = input.rooms ?? rules.roomCount;
+  return { entrants, judges, rooms, ...capacityPlan({ entrants, rooms, judges, rules }) };
 }
 
 export function createEvent(input) {
-  return { name: required(input.name), type: text(input.type || 'Prepared speech'), ...settings(input), speakers: [], judges: [], rounds: [] };
+  return { name: required(input.name), type: text(input.type || 'Prepared speech'), ...settings(input), ruleVersion: 1, speakers: [], judges: [], rounds: [] };
 }
 
 export function scoreRow(event, row) {
-  assert(Array.isArray(row.scores) && row.scores.length === event.rubric.length, 'Every criterion needs a score.');
-  return rounded(event.rubric.reduce((sum, criterion, i) => {
-    const score = row.scores[i];
-    assert(typeof score === 'number' && Number.isFinite(score) && score >= 0 && score <= criterion.max, `${criterion.name}: enter a score from 0 to ${criterion.max}.`);
-    return sum + score / criterion.max * criterion.weight;
-  }, 0));
+  return calculatePerformance(rulesOf(event), row).total;
 }
 
+// One result per speaker per room, from approved ballots only. Every judge counts equally.
 export function roundResults(event, round) {
-  const results = [];
+  const rules = rulesOf(event), results = [];
   for (const room of round.rooms) {
     const ballots = room.judges.map(judgeId => round.ballots.find(b => b.roomId === room.id && b.judgeId === judgeId && b.status === 'approved'));
     if (!ballots.length || ballots.some(b => !b)) continue;
     for (const speakerId of room.speakers) {
-      const rows = ballots.map(b => b.rows.find(r => r.speakerId === speakerId));
-      results.push({ speakerId, roundId: round.id, score: rounded(rows.reduce((sum, r) => sum + scoreRow(event, r), 0) / rows.length), rankSum: rows.reduce((sum, r) => sum + r.rank, 0), judgeCount: rows.length, meanRank: rounded(rows.reduce((sum, r) => sum + r.rank, 0) / rows.length) });
+      const judged = ballots.map(b => {
+        const row = b.rows.find(r => r.speakerId === speakerId);
+        const calc = calculatePerformance(rules, { ...row, elapsedSeconds: row.elapsedSeconds ?? undefined });
+        return { judgeId: b.judgeId, rank: row.rank, total: calc.total, penalty: Number(calc.penalty) };
+      });
+      const sum = judged.reduce((t, x) => t.plus(x.total), new Decimal(0)), rankSum = judged.reduce((t, x) => t.plus(x.rank), new Decimal(0));
+      const score = (rules.aggregation === 'sum' ? sum : sum.div(judged.length)).toDecimalPlaces(4).toNumber();
+      const meanRank = rankSum.div(judged.length).toDecimalPlaces(4).toNumber();
+      // Within-heat progression compares relative position (0 = first, 1 = last) so unequal heats are comparable. Used only when configured.
+      const position = room.speakers.length > 1 ? new Decimal(meanRank).minus(1).div(room.speakers.length - 1).toDecimalPlaces(4).toNumber() : 0;
+      results.push({ speakerId, roundId: round.id, roomId: room.id, heatSize: room.speakers.length, score, rankSum: rankSum.toNumber(), judgeCount: judged.length, meanRank, position, judges: judged });
     }
   }
   return results;
@@ -62,7 +91,7 @@ export function standings(event, rounds = event.rounds.filter(r => r.stage === '
     const row = rows.get(speaker.id);
     row.rounds++;
     row.score = rounded(row.score + result.score);
-    row.rankTotal = rounded(row.rankTotal + result.meanRank);
+    row.rankTotal = rounded(row.rankTotal + (rulesOf(event).rankPolicy === 'within-heat' ? result.position : result.meanRank));
   }
   const compare = event.scoring === 'rank'
     ? (a, b) => a.rankTotal - b.rankTotal || b.score - a.score
@@ -98,7 +127,12 @@ function validateRooms(event, rooms, expected) {
 }
 
 export function allocationWarnings(event, round) {
-  const warnings = [];
+  const warnings = [], rules = rulesOf(event);
+  const panel = round.stage === 'preliminary' ? rules.panelSize : rules.finalPanelSize;
+  for (const room of round.rooms) {
+    if (room.judges.length !== panel) warnings.push(`${room.name}: ${room.judges.length} judge(s) assigned; the configured panel is ${panel}.`);
+    if (room.speakers.length < rules.minHeat) warnings.push(`${room.name}: ${room.speakers.length} speaker(s); the configured minimum is ${rules.minHeat}.`);
+  }
   for (const room of round.rooms) for (const judgeId of room.judges) {
     const judge = find(event.judges, judgeId, 'Judge');
     for (const speakerId of room.speakers) {
@@ -133,7 +167,7 @@ export function mutateEvent(original, action, input, actor) {
   if (!['ballot', 'judge-feedback', 'check-in'].includes(action)) adminOnly(actor);
   if (action === 'settings') {
     assert(!event.rounds.length, 'Event rules are frozen once rounds exist.');
-    Object.assign(event, settings(input), { name: required(input.name), type: text(input.type) });
+    Object.assign(event, settings(input), { name: required(input.name), type: text(input.type), ruleVersion: (event.ruleVersion || 1) + 1 });
   } else if (action === 'add-speakers' || action === 'add-judges') {
     const list = action === 'add-speakers' ? event.speakers : event.judges;
     assert(Array.isArray(input.people) && input.people.length > 0 && input.people.length <= 500, 'Add 1–500 people at a time.');
@@ -169,6 +203,9 @@ export function mutateEvent(original, action, input, actor) {
     if (action === 'save-draw') {
       assert(round.status === 'draft', 'Only draft rounds can be allocated.');
       round.rooms = validateRooms(event, input.rooms, round.speakerIds);
+      const rules = rulesOf(event);
+      for (const room of round.rooms) assert(room.speakers.length <= rules.maxHeat, `${room.name} has ${room.speakers.length} speakers; the maximum per heat is ${rules.maxHeat}.`);
+      if (rules.scoring === 'rank' && rules.rankPolicy === 'equal-heats') assert(new Set(round.rooms.map(r => r.speakers.length)).size === 1, 'Rank-based standings compare rank totals across rooms, so every room needs the same number of speakers. Rebalance the rooms or choose within-heat progression in the event rules.');
     } else if (action === 'open-round') {
       assert(round.status === 'draft', 'Only draft rounds can be opened.');
       validateRooms(event, round.rooms, round.speakerIds);
@@ -186,8 +223,11 @@ export function mutateEvent(original, action, input, actor) {
       assert(!existing || existing.status === 'draft', 'This ballot is locked. Ask tab to reopen it.');
       assert(Array.isArray(input.rows) && input.rows.length === room.speakers.length && new Set(input.rows.map(r => r.speakerId)).size === room.speakers.length && input.rows.every(r => room.speakers.includes(r.speakerId)), 'A ballot must contain every speaker in this room exactly once.');
       const rows = input.rows.map(row => {
-        scoreRow(event, row);
-        return { speakerId: row.speakerId, scores: [...row.scores], rank: integer(row.rank, 1, room.speakers.length), feedback: text(row.feedback, 5000) };
+        const elapsed = row.elapsedSeconds == null || row.elapsedSeconds === '' ? null : Number(row.elapsedSeconds);
+        assert(elapsed === null || (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 7200), 'Elapsed time must be between 0 and 7200 seconds.');
+        scoreRow(event, { ...row, elapsedSeconds: elapsed ?? undefined });
+        return { speakerId: row.speakerId, scores: [...row.scores], rank: integer(row.rank, 1, room.speakers.length), elapsedSeconds: elapsed,
+          feedback: text(row.feedback, 5000), worked: text(row.worked, 3000), improve: text(row.improve, 3000), nextStep: text(row.nextStep, 3000) };
       });
       assert(new Set(rows.map(r => r.rank)).size === rows.length, 'Each speaker needs a unique rank within this ballot.');
       assert(['draft', 'submitted'].includes(input.status), 'Invalid ballot status.');
@@ -226,7 +266,7 @@ export function projectEvent(event, actor = { role: 'public' }) {
   const published = event.rounds.filter(r => r.drawPublished);
   const visibleResults = published.filter(r => r.resultsPublished && r.status === 'completed');
   return {
-    name: event.name, type: event.type, rubric: event.rubric, scoring: event.scoring, durationSeconds: event.durationSeconds,
+    name: event.name, type: event.type, rubric: rulesOf(event).rubric, scoring: event.scoring, durationSeconds: rulesOf(event).durationSeconds, penalty: rulesOf(event).penalty,
     participant: person ? { id: person.id, name: person.name, checkedIn: person.checkedIn, role: actor.role } : null,
     speakers: event.speakers.filter(s => published.some(r => r.rooms.some(room => room.speakers.includes(s.id)))).map(s => ({ id: s.id, name: s.name, institution: s.institution, category: s.category })),
     judges: event.judges.filter(j => published.some(r => r.rooms.some(room => room.judges.includes(j.id)))).map(j => ({ id: j.id, name: j.name })),
@@ -238,7 +278,7 @@ export function projectEvent(event, actor = { role: 'public' }) {
       standings: r.resultsPublished && r.status === 'completed' ? standings(event, [r]) : [],
       ballots: actor.role === 'judge' ? r.ballots.filter(b => b.judgeId === actor.id) : [],
       feedback: actor.role === 'speaker' && r.feedbackPublished && r.status === 'completed'
-        ? r.ballots.filter(b => b.status === 'approved').flatMap(b => b.rows.filter(row => row.speakerId === actor.id).map(row => ({ feedback: row.feedback, scores: row.scores }))) : [],
+        ? r.ballots.filter(b => b.status === 'approved').flatMap(b => b.rows.filter(row => row.speakerId === actor.id).map(row => ({ feedback: row.feedback, worked: row.worked || '', improve: row.improve || '', nextStep: row.nextStep || '', scores: row.scores }))) : [],
       judgeFeedback: r.judgeFeedback.filter(f => f.fromRole === actor.role && f.fromId === actor.id)
     }))
   };

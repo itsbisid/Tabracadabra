@@ -2,9 +2,29 @@ import { renderAppLayout } from '../../components/layout.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { supabase } from '../../lib/supabase.js';
 import { psRequest } from '../../lib/ps-service.js';
-import { h, button, field, input, select, card, empty, table, nameOf, standingsTable, csvDownload, showDialog, ballotDialog } from '../../components/ps-ui.js';
+import { ballotView, h, button, field, input, select, card, empty, table, nameOf, standingsTable, csvDownload, showDialog, ballotDialog } from '../../components/ps-ui.js';
 
 const defaults = [{ name: 'Content', max: 40, weight: 40 }, { name: 'Delivery', max: 40, weight: 40 }, { name: 'Structure', max: 20, weight: 20 }];
+// Editable starting points only. They are not official rules for any competition.
+const PRESETS = {
+  prepared: { label: 'Prepared speech (example)', type: 'Prepared speech', rubric: [{ id: 'content', name: 'Content', max: 40, weight: 40 }, { id: 'delivery', name: 'Delivery', max: 35, weight: 35 }, { id: 'language', name: 'Language', max: 25, weight: 25 }], durationSeconds: 300, preparationSeconds: 0 },
+  impromptu: { label: 'Impromptu (example)', type: 'Impromptu speech', rubric: [{ id: 'ideas', name: 'Ideas', max: 30, weight: 30 }, { id: 'organisation', name: 'Organisation', max: 30, weight: 30 }, { id: 'delivery', name: 'Delivery', max: 40, weight: 40 }], durationSeconds: 180, preparationSeconds: 120 },
+  interpretation: { label: 'Programme of Oral Interpretation (example)', type: 'Programme of Oral Interpretation', rubric: [{ id: 'interpretation', name: 'Interpretation', max: 40, weight: 40 }, { id: 'performance', name: 'Performance', max: 40, weight: 40 }, { id: 'selection', name: 'Selection', max: 20, weight: 20 }], durationSeconds: 600, preparationSeconds: 0 }
+};
+const num = (fd, name) => Number(fd.get(name));
+function readSettings(fd) {
+  const all = name => fd.getAll(name);
+  return {
+    name: fd.get('name'), type: fd.get('type'), scoring: fd.get('scoring'), aggregation: fd.get('aggregation'), rankPolicy: fd.get('rankPolicy'), precision: num(fd, 'precision'),
+    rubric: all('criterionName').map((name, i) => ({ id: all('criterionId')[i] || undefined, name, description: all('criterionDescription')[i] || '', max: Number(all('criterionMax')[i]), weight: Number(all('criterionWeight')[i]), step: Number(all('criterionStep')[i] || 1) })),
+    minHeat: num(fd, 'minHeat'), maxHeat: num(fd, 'maxHeat'), panelSize: num(fd, 'panelSize'), finalPanelSize: num(fd, 'finalPanelSize'), roomCount: num(fd, 'roomCount'),
+    preliminaryRounds: num(fd, 'preliminaryRounds'), breakSize: num(fd, 'breakSize'), feedbackPolicy: fd.get('feedbackPolicy'),
+    durationSeconds: num(fd, 'durationSeconds'), preparationSeconds: num(fd, 'preparationSeconds'), graceSeconds: num(fd, 'graceSeconds'), changeoverSeconds: num(fd, 'changeoverSeconds'),
+    deliberationSeconds: num(fd, 'deliberationSeconds'), travelSeconds: num(fd, 'travelSeconds'),
+    penalty: { method: fd.get('penaltyMethod'), pointsPerStep: num(fd, 'penaltyPoints'), stepSeconds: num(fd, 'penaltyStep') || 10, cap: num(fd, 'penaltyCap') }
+  };
+}
+const n = (name, value, attrs) => input(name, value, `type="number" ${attrs}`);
 const labels = { setup: 'Event setup', speakers: 'Speakers', judges: 'Judges', rounds: 'Rounds & ballots', results: 'Results & breaks', feedback: 'Judge feedback', history: 'History' };
 
 export async function renderPublicSpeaking(container) {
@@ -27,13 +47,50 @@ export async function renderPublicSpeaking(container) {
   const errorMessage = error => { const el = root.querySelector('#ps-error'); el.textContent = error.message; el.hidden = false; el.scrollIntoView({ block: 'nearest' }); };
   const portalBase = () => `${location.origin}${location.pathname}`;
 
-  function settingsForm(state = null) {
-    const rubric = state?.rubric || defaults;
-    return `<form data-form="settings" class="ps-stack">${field('Event name', input('name', state?.name || '', 'placeholder="e.g. GUDC Prepared Speech" required maxlength="160"'))}<div class="ps-grid">${field('Event type', select('type', ['Prepared speech', 'Impromptu speech', 'Programme of Oral Interpretation', 'Other'].map(s => [s, s]), state?.type))}${field('Tabulation', select('scoring', [['score', 'Highest score'], ['rank', 'Lowest mean rank']], state?.scoring))}${field('Speech length (seconds, for guidance)', input('durationSeconds', state?.durationSeconds || 180, 'type="number" min="30" max="3600" required'))}</div>
-      <fieldset><legend>Scoring rubric</legend><p class="ps-help">Set maximum marks and weights. Weights must total 100. Rules freeze when the first round is created.</p><div id="ps-criteria">${rubric.map((c, i) => rubricRow(c, i)).join('')}</div>${button('Add criterion', 'type="button" data-action="criterion"', true)}</fieldset>
-      ${button(state ? 'Save event settings' : 'Create event', 'type="submit"')}<p class="ps-help">Each judge submits a complete ballot. Tab approves ballots before the round contributes to standings.</p></form>`;
+  function settingsForm(state = null, creating = !state) {
+    const r = state || {}, rubric = r.rubric || defaults, pen = r.penalty || { method: 'none', pointsPerStep: 1, stepSeconds: 10, cap: 5 };
+    return `<form data-form="settings" class="ps-stack">
+      ${!creating ? '' : `<div class="ps-actions">${field('Start from an example template', select('preset', [['', 'Choose a template (optional)'], ...Object.entries(PRESETS).map(([id, p]) => [id, p.label])]))}</div><p class="ps-help">Templates are editable examples, not official competition rules.</p>`}
+      ${field('Event name', input('name', r.name || '', 'placeholder="e.g. GUDC Prepared Speech" required maxlength="160"'))}
+      <div class="ps-grid">${field('Event type', select('type', ['Prepared speech', 'Impromptu speech', 'Programme of Oral Interpretation', 'Other'].map(x => [x, x]), r.type))}${field('Tabulation', select('scoring', [['score', 'Weighted score (highest wins)'], ['rank', 'Rank-based (lowest mean rank wins)']], r.scoring))}${field('Panel scores', select('aggregation', [['mean', 'Average the judges'], ['sum', 'Add the judges together']], r.aggregation))}</div>
+      <fieldset><legend>Scoring rubric</legend><p class="ps-help">Each criterion counts as (mark ÷ maximum) × weight, so a judge's total is out of 100. Weights must total 100. Rules freeze when the first round is created.</p><div id="ps-criteria">${rubric.map((c, i) => rubricRow(c, i)).join('')}</div>${button('Add criterion', 'type="button" data-action="criterion"', true)}</fieldset>
+      <fieldset><legend>Heats and judging panels</legend><div class="ps-grid">${field('Physical rooms available', n('roomCount', r.roomCount ?? 8, 'min="1" max="100" required'))}${field('Min speakers per heat', n('minHeat', r.minHeat ?? 2, 'min="1" max="50" required'))}${field('Max speakers per heat', n('maxHeat', r.maxHeat ?? 6, 'min="1" max="50" required'))}${field('Judges per heat (preliminaries)', n('panelSize', r.panelSize ?? 2, 'min="1" max="10" required'))}${field('Judges per heat (finals)', n('finalPanelSize', r.finalPanelSize ?? 3, 'min="1" max="10" required'))}</div></fieldset>
+      <fieldset><legend>Timing</legend><div class="ps-grid">${field('Speech length (seconds)', n('durationSeconds', r.durationSeconds ?? 180, 'min="30" max="3600" required'))}${field('Grace period (seconds)', n('graceSeconds', r.graceSeconds ?? 15, 'min="0" max="600" required'))}${field('Overtime penalty', select('penaltyMethod', [['none', 'No automatic penalty'], ['overtime', 'Deduct points for overtime']], pen.method))}</div>
+        <div class="ps-grid" data-penalty ${pen.method === 'overtime' ? '' : 'hidden'}>${field('Points deducted per step', n('penaltyPoints', pen.pointsPerStep ?? 1, 'min="0" max="100" step="any"'))}${field('Step length (seconds over)', n('penaltyStep', pen.stepSeconds ?? 10, 'min="1" max="600"'))}${field('Maximum deduction', n('penaltyCap', pen.cap ?? 5, 'min="0" max="100" step="any"'))}</div>
+        <p class="ps-help">With a penalty, judges or timekeepers record each speaker's elapsed time on the ballot. A browser timer is never treated as the official time.</p></fieldset>
+      <details class="ps-advanced"><summary>Advanced settings</summary>
+        <div class="ps-grid">${field('Rank progression', select('rankPolicy', [['equal-heats', 'Compare rank totals (equal heat sizes required)'], ['within-heat', 'Compare relative position within each heat']], r.rankPolicy))}${field('Decimal places shown', n('precision', r.precision ?? 2, 'min="0" max="4" required'))}${field('Preliminary rounds', n('preliminaryRounds', r.preliminaryRounds ?? 3, 'min="1" max="20" required'))}${field('Break size', n('breakSize', r.breakSize ?? 12, 'min="1" max="2000" required'))}${field('Feedback', select('feedbackPolicy', [['together', 'Submitted with scores'], ['scores-first', 'Scores first, feedback by a later deadline']], r.feedbackPolicy))}</div>
+        <div class="ps-grid">${field('Preparation time (seconds)', n('preparationSeconds', r.preparationSeconds ?? 0, 'min="0" max="7200" required'))}${field('Changeover between speakers (s)', n('changeoverSeconds', r.changeoverSeconds ?? 30, 'min="0" max="600" required'))}${field('Judge deliberation (s)', n('deliberationSeconds', r.deliberationSeconds ?? 300, 'min="0" max="3600" required'))}${field('Travel buffer between rooms (s)', n('travelSeconds', r.travelSeconds ?? 120, 'min="0" max="3600" required'))}</div>
+      </details>
+      <section class="ps-preview" aria-live="polite"><h3>Calculation preview</h3><div id="ps-rule-preview"><p class="ps-help">Change any setting to see a sample ballot worked through.</p></div></section>
+      ${button(creating ? 'Create event' : 'Save event settings', 'type="submit"')}<p class="ps-help">Each judge submits a complete ballot. Tab approves ballots before the round contributes to standings.</p></form>`;
   }
-  function rubricRow(c, i) { return `<div class="ps-grid ps-criterion">${field(`Criterion ${i + 1}`, input('criterionName', c.name, 'required maxlength="160"'))}${field('Max marks', input('criterionMax', c.max, 'type="number" min="1" max="1000" required'))}${field('Weight (%)', input('criterionWeight', c.weight, 'type="number" min="1" max="100" required'))}${button('Remove', 'type="button" data-action="remove-criterion"', true)}</div>`; }
+  function rubricRow(c, i) { return `<div class="ps-grid ps-criterion"><input type="hidden" name="criterionId" value="${h(c.id || '')}">${field(`Criterion ${i + 1}`, input('criterionName', c.name, 'required maxlength="160"'))}${field('Max marks', n('criterionMax', c.max, 'min="1" max="1000" step="any" required'))}${field('Weight (%)', n('criterionWeight', c.weight, 'min="0.01" max="100" step="any" required'))}${field('Mark increments', n('criterionStep', c.step || 1, 'min="0.01" step="any" required'))}${field('Description (optional)', input('criterionDescription', c.description || '', 'maxlength="1000"'))}${button('Remove', 'type="button" data-action="remove-criterion"', true)}</div>`; }
+  function previewHtml({ rules, sample }) {
+    const rows = rules.rubric.map((c, i) => [h(c.name), `${sample.scores[i]} / ${c.max}`, `${c.weight}%`, `${sample.scores[i]} ÷ ${c.max} × ${c.weight} = ${Number(sample.result.breakdown[i].contribution).toFixed(rules.precision)}`]);
+    const penalty = Number(sample.result.penalty);
+    return `${table(['Criterion', 'Sample mark', 'Weight', 'Contribution'], rows)}<p>${penalty ? `Before penalty ${Number(sample.result.beforePenalty).toFixed(rules.precision)}; overtime of ${sample.elapsedSeconds - rules.durationSeconds - rules.graceSeconds}s past the grace period deducts ${penalty}. ` : ''}<strong>Judge total: ${sample.result.total.toFixed(rules.precision)} / 100.</strong> ${rules.aggregation === 'mean' ? 'The room score is the average of the judges’ totals.' : 'The room score is the sum of the judges’ totals.'} ${rules.scoring === 'rank' ? 'Standings use ranks first; scores break ties.' : 'Standings use scores first; mean ranks break ties.'}</p>`;
+  }
+  let previewTimer;
+  function schedulePreview(form) {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(async () => {
+      const target = form.querySelector('#ps-rule-preview'); if (!target) return;
+      try { target.innerHTML = previewHtml(await psRequest({ action: 'preview-rules', tournamentId, input: readSettings(new FormData(form)) })); }
+      catch (error) { target.innerHTML = `<p class="ps-error" role="alert">${h(error.message)}</p>`; }
+    }, 400);
+  }
+  function rulesSummary(r) {
+    return `${table(['Criterion', 'Maximum', 'Increment', 'Weight'], r.rubric.map(c => [h(c.name), c.max, c.step || 1, `${c.weight}%`]))}<p>Tabulation: ${r.scoring === 'rank' ? 'rank-based' : 'weighted score'} · panel ${r.aggregation === 'sum' ? 'sum' : 'average'} · ${r.minHeat ?? 2}–${r.maxHeat ?? 6} speakers per heat · ${r.panelSize ?? 2} judges per heat (${r.finalPanelSize ?? 3} in finals) · speech ${r.durationSeconds}s + ${r.graceSeconds ?? 15}s grace · ${r.penalty?.method === 'overtime' ? `overtime penalty ${r.penalty.pointsPerStep} per ${r.penalty.stepSeconds}s (max ${r.penalty.cap})` : 'no automatic penalty'} · rule version ${r.ruleVersion || 1}.</p>`;
+  }
+  function plannerCard() {
+    return card('Capacity planner', `<p class="ps-help">Estimates heats, rooms, judges and waves from your rules. These are estimates before personal conflicts, room accessibility and availability are applied.</p><form data-form="plan" class="ps-grid">${field('Entrants', n('entrants', current.state.speakers.filter(p => p.active).length, 'min="0" max="2000"'))}${field('Available rooms', n('rooms', current.state.roomCount ?? 8, 'min="0" max="100"'))}${field('Available judges', n('judges', current.state.judges.filter(p => p.active).length, 'min="0" max="2000"'))}${button('Calculate', 'type="submit"', true)}</form><div id="ps-plan" aria-live="polite"></div>`);
+  }
+  function planHtml(p) {
+    const mins = s => Math.round(s / 60);
+    return `<div class="ps-stats"><div><strong>${p.heats}</strong><span>Heats needed</span></div><div><strong>${p.concurrency}</strong><span>Heats at once</span></div><div><strong>${p.waves}</strong><span>Waves</span></div><div><strong>${Math.max(0, p.standbyJudges)}</strong><span>Standby judges</span></div><div><strong>~${mins(p.estimatedSeconds)} min</strong><span>Estimated round length</span></div></div>
+      ${p.feasible ? `<p>${p.heats} heats can run ${p.concurrency} at a time (limited by ${p.concurrency === p.rooms ? 'rooms' : p.concurrency === p.heats ? 'the number of heats' : 'full judging panels'}), so the round needs ${p.waves} wave${p.waves === 1 ? '' : 's'} of about ${mins(p.heatSeconds)} minutes each.</p>` : `<div class="ps-warning"><p><strong>This setup does not work yet:</strong></p><ul>${p.problems.map(x => `<li>${h(x)}</li>`).join('')}</ul><p>Options: add rooms, add judges, add a wave, stagger categories, or revise the heat limits.</p></div>`}<p class="ps-help">${h(p.note)}</p>`;
+  }
 
   function roster(role) {
     const people = role === 'speaker' ? current.state.speakers : current.state.judges;
@@ -67,10 +124,20 @@ export async function renderPublicSpeaking(container) {
     const event = current?.state;
     root.innerHTML = `<div class="ps-top"><div><span class="ps-eyebrow">TOURNAMENT WORKSPACE</span><h1>Public speaking</h1><p>Events, rounds and individual performances.</p></div><div class="ps-actions">${events.length ? field('Speaking event', select('eventId', [...(!current ? [['', 'Choose an existing event']] : []), ...events.map(e => [e.id, e.name])], current?.id)) : ''}${button('New event', 'data-action="new-event"', true)}${button('Refresh', 'data-action="refresh"', true)}</div></div><p id="ps-error" class="ps-error" role="alert" hidden></p>
       ${event ? `<div class="ps-stats"><div><strong>${h(event.name)}</strong><span>${h(event.type)}</span></div><div><strong>${event.speakers.filter(s => s.active).length}</strong><span>Active speakers</span></div><div><strong>${event.judges.filter(j => j.active).length}</strong><span>Judges</span></div><div><strong>${event.rounds.filter(r => r.status === 'completed').length} / ${event.rounds.length}</strong><span>Rounds completed</span></div></div><nav class="ps-tabs" aria-label="Public speaking sections">${Object.entries(labels).map(([id, name]) => `<button data-action="tab" data-tab="${id}" class="${tab === id ? 'active' : ''}" aria-current="${tab === id ? 'page' : 'false'}">${name}</button>`).join('')}</nav>` : ''}
-      ${!event ? card('Add a speaking event', settingsForm()) : tab === 'setup' ? card('Event settings', event.rounds.length ? `<p>Rules are locked for this event.</p>${table(['Criterion', 'Maximum', 'Weight'], event.rubric.map(c => [h(c.name), c.max, `${c.weight}%`]))}<p>Tabulation: ${h(event.scoring)}. Speech length: ${event.durationSeconds} seconds.</p>` : settingsForm(event)) : tab === 'speakers' ? roster('speaker') : tab === 'judges' ? roster('judge') : tab === 'rounds' ? roundCards() : tab === 'results' ? resultCards() : tab === 'feedback' ? feedbackCards() : card('Change history', `${button('Load history', 'data-action="history"', true)}<div id="ps-history"></div>`)}`;
+      ${!event ? card('Add a speaking event', settingsForm()) : tab === 'setup' ? card('Event settings', event.rounds.length ? `<p>Rules are locked for this event because rounds exist.</p>${rulesSummary(event)}` : settingsForm(event)) + plannerCard() : tab === 'speakers' ? roster('speaker') : tab === 'judges' ? roster('judge') : tab === 'rounds' ? roundCards() : tab === 'results' ? resultCards() : tab === 'feedback' ? feedbackCards() : card('Change history', `${button('Load history', 'data-action="history"', true)}<div id="ps-history"></div>`)}`;
   }
 
+  root.addEventListener('input', e => { const form = e.target.closest('form[data-form="settings"]'); if (form) schedulePreview(form); });
   root.addEventListener('change', async e => {
+    const form = e.target.closest('form[data-form="settings"]');
+    if (form && e.target.name === 'penaltyMethod') form.querySelector('[data-penalty]').hidden = e.target.value !== 'overtime';
+    if (form && e.target.name === 'preset' && PRESETS[e.target.value]) {
+      const p = PRESETS[e.target.value], name = form.elements.name.value;
+      root.querySelector('[data-form="settings"]').outerHTML = settingsForm({ ...p, name }, !current);
+      schedulePreview(root.querySelector('[data-form="settings"]'));
+      return;
+    }
+    if (form) { schedulePreview(form); return; }
     if (e.target.name !== 'eventId' || !e.target.value) return;
     try { current = await psRequest({ action: 'read', eventId: e.target.value }); tab = 'setup'; render(); } catch (error) { errorMessage(error); }
   });
@@ -79,10 +146,13 @@ export async function renderPublicSpeaking(container) {
     const fd = new FormData(e.target); const btn = e.submitter; if (btn) btn.disabled = true;
     try {
       if (e.target.dataset.form === 'settings') {
-        const data = { name: fd.get('name'), type: fd.get('type'), scoring: fd.get('scoring'), durationSeconds: Number(fd.get('durationSeconds')), rubric: fd.getAll('criterionName').map((name, i) => ({ name, max: Number(fd.getAll('criterionMax')[i]), weight: Number(fd.getAll('criterionWeight')[i]) })) };
+        const data = readSettings(fd);
         if (current) await mutate('settings', data);
         else current = await psRequest({ action: 'create', tournamentId, input: data });
         await loadEvents(); tab = 'speakers'; render();
+      } else if (e.target.dataset.form === 'plan') {
+        const { plan } = await psRequest({ action: 'plan', eventId: current.id, input: { entrants: num(fd, 'entrants'), rooms: num(fd, 'rooms'), judges: num(fd, 'judges') } });
+        root.querySelector('#ps-plan').innerHTML = planHtml(plan);
       } else if (e.target.dataset.form === 'publish') await mutate('publish', { roundId: e.target.dataset.id, resultsPublished: fd.has('resultsPublished'), feedbackPublished: fd.has('feedbackPublished') });
     } catch (error) { errorMessage(error); } finally { busy = false; if (btn) btn.disabled = false; }
   });
@@ -91,7 +161,7 @@ export async function renderPublicSpeaking(container) {
     const btn = e.target.closest('[data-action]'); if (!btn || busy) return;
     const { action, id, role } = btn.dataset;
     try {
-      if (action === 'criterion') { const target = root.querySelector('#ps-criteria'); target.insertAdjacentHTML('beforeend', rubricRow({ name: '', max: 20, weight: 20 }, target.children.length)); return; }
+      if (action === 'criterion') { const target = root.querySelector('#ps-criteria'); target.insertAdjacentHTML('beforeend', rubricRow({ name: '', max: 20, weight: 20, step: 1 }, target.children.length)); return; }
       if (action === 'remove-criterion') { btn.closest('.ps-criterion').remove(); return; }
       if (action === 'tab') { tab = btn.dataset.tab; render(); return; }
       if (action === 'new-event') { current = null; tab = 'setup'; render(); return; }
@@ -109,7 +179,7 @@ export async function renderPublicSpeaking(container) {
       if (action === 'new-round') { newRoundDialog(); return; }
       if (action === 'draw') { drawDialog(current.state.rounds.find(r => r.id === id)); return; }
       if (action === 'ballot') { const round = current.state.rounds.find(r => r.id === btn.dataset.round); ballotDialog(current.state, round, round.rooms.find(r => r.id === btn.dataset.room), btn.dataset.judge, true, data => mutate('ballot', data)); return; }
-      if (action === 'view-ballot') { const round = current.state.rounds.find(r => r.id === btn.dataset.round); const ballot = round.ballots.find(b => b.id === id); showDialog('Submitted ballot', table(['Speaker', 'Rank', ...current.state.rubric.map(c => c.name), 'Feedback'], ballot.rows.map(row => [h(nameOf(current.state.speakers, row.speakerId)), row.rank, ...row.scores, h(row.feedback)]))); return; }
+      if (action === 'view-ballot') { const round = current.state.rounds.find(r => r.id === btn.dataset.round); const ballot = round.ballots.find(b => b.id === id); showDialog(`Ballot · ${ballot.status} · version ${ballot.version || 1}`, ballotView(current.state, ballot)); return; }
       if (action === 'break') { breakDialog(); return; }
       if (action === 'export-speakers') { csvDownload('ps-speakers.csv', ['Name', 'Institution', 'Category', 'Active', 'Checked in'], current.state.speakers.map(p => [p.name, p.institution, p.category, p.active, p.checkedIn])); return; }
       if (action === 'export-results') { csvDownload('ps-standings.csv', ['Place', 'Name', 'Institution', 'Rounds', 'Score', 'Mean rank total'], current.state.standings.map(p => [p.place, p.name, p.institution, p.rounds, p.score, p.rankTotal])); return; }
@@ -144,7 +214,7 @@ export async function renderPublicSpeaking(container) {
     const event = current.state, judges = event.judges.filter(j => j.active);
     let rooms = structuredClone(round.rooms);
     const drawEditor = () => `<p class="ps-help">Speaking order follows the number beside each speaker. Review conflicts before publishing. A judge cannot be assigned to two rooms in this round.</p>${rooms.map((room, ri) => `<fieldset class="ps-room"><legend>Room ${ri + 1}</legend>${field('Venue / room', input(`room-${ri}`, room.name, `required list="ps-venues-${ri}"`))}<datalist id="ps-venues-${ri}">${venues.map(v => `<option value="${h(v.name)}"></option>`).join('')}</datalist><div class="ps-checklist">${judges.map(j => `<label><input name="judges-${ri}" type="checkbox" value="${j.id}" ${room.judges.includes(j.id) ? 'checked' : ''}> ${h(j.name)} · ${h(j.institution || 'No institution')}</label>`).join('')}</div></fieldset>`).join('')}${table(['Speaker', 'Room', 'Speaking order'], round.speakerIds.map(id => { const ri = rooms.findIndex(r => r.speakers.includes(id)); return [h(nameOf(event.speakers, id)), select(`roomFor-${id}`, rooms.map((_, i) => [i, `Room ${i + 1}`]), ri), input(`order-${id}`, rooms[ri]?.speakers.indexOf(id) + 1 || 1, 'type="number" min="1" required')]; }))}${button('Save draw', 'type="submit"')}`;
-    const dialog = showDialog('Allocate speakers and judges', `<form class="ps-stack"><div class="ps-actions">${field('Maximum speakers per room', input('roomSize', 6, 'type="number" min="1" max="50"'))}${button('Generate random draw', 'type="button" data-generate', true)}${button('Seed from standings', 'type="button" data-seed', true)}</div><div id="ps-draw-editor">${rooms.length ? drawEditor() : empty('Generate a draw, then review rooms and judge allocations.')}</div></form>`, async fd => {
+    const dialog = showDialog('Allocate speakers and judges', `<form class="ps-stack"><div class="ps-actions">${field('Maximum speakers per room', input('roomSize', event.maxHeat ?? 6, 'type="number" min="1" max="50"'))}${button('Generate random draw', 'type="button" data-generate', true)}${button('Seed from standings', 'type="button" data-seed', true)}</div><div id="ps-draw-editor">${rooms.length ? drawEditor() : empty('Generate a draw, then review rooms and judge allocations.')}</div></form>`, async fd => {
       if (!rooms.length) throw new Error('Generate a draw first.');
       const updated = rooms.map((room, ri) => ({ name: fd.get(`room-${ri}`), judges: fd.getAll(`judges-${ri}`), speakers: round.speakerIds.filter(id => Number(fd.get(`roomFor-${id}`)) === ri).sort((a, b) => Number(fd.get(`order-${a}`)) - Number(fd.get(`order-${b}`))) }));
       for (const room of updated) if (new Set(room.speakers.map(id => fd.get(`order-${id}`))).size !== room.speakers.length) throw new Error('Speaking order numbers must be unique within each room.');

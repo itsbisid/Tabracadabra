@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { collectBody, sendJson } from '../api-shared/portal-utils.js';
 import { canAdministerTournament, getSessionContext } from '../api-shared/deletion-utils.js';
-import { createEvent, mutateEvent, projectEvent } from '../api-shared/ps-engine.js';
+import { createEvent, mutateEvent, projectEvent, previewRules, planCapacity } from '../api-shared/ps-engine.js';
 import { issuePSLink, verifyPSLink, assertPSParticipant } from '../api-shared/ps-access.js';
 import { auditTrail, commitEvent, listEvents, loadEvent } from '../api-shared/ps-store.js';
 
@@ -42,6 +42,8 @@ export default async function handler(request, response) {
       if (!(await canAdministerTournament(session, tournamentId))) fail('Only this tournament’s administrators can manage public speaking.', 403);
       actor = { role: 'admin', id: session.user.id };
       if (action === 'list') return sendJson(response, 200, { events: await listEvents(tournamentId) });
+      // Read-only: validates draft rules and returns a hand-checkable sample ballot.
+      if (action === 'preview-rules') return sendJson(response, 200, previewRules(input, input.sampleScores));
       if (action === 'create') {
         const created = await commitEvent({ id: randomUUID(), tournament_id: tournamentId, version: 0 }, createEvent(input), actor, action, { requestKey, request: payload });
         return sendJson(response, 200, { id: created.id, version: created.version, state: projectEvent(created.state, actor) });
@@ -49,6 +51,10 @@ export default async function handler(request, response) {
     }
     if (!row) fail('Choose a public speaking event.');
     if (action === 'read') return sendJson(response, 200, { id: row.id, version: row.version, state: projectEvent(row.state, actor) });
+    if (action === 'plan') {
+      if (actor.role !== 'admin') fail('Only tournament administrators can plan capacity.', 403);
+      return sendJson(response, 200, { plan: planCapacity(row.state, input) });
+    }
     if (action === 'audit') {
       if (actor.role !== 'admin') fail('Only tournament administrators can view history.', 403);
       return sendJson(response, 200, { audit: await auditTrail(row.id) });

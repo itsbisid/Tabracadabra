@@ -7,7 +7,9 @@
     "test": "node --test tests/*.test.js",
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "ps:fake-supabase": "node scripts/ps-fake-supabase.mjs",
+    "ps:e2e": "node scripts/ps-e2e.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

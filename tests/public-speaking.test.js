@@ -6,7 +6,7 @@ import { issuePSLink, verifyPSLink, assertPSParticipant } from '../api-shared/ps
 const admin = { role: 'admin', id: 'tab' };
 const mutate = (state, action, input = {}, actor = admin) => mutateEvent(state, action, input, actor);
 function fixture(judgeCount = 2) {
-  let state = createEvent({ name: 'Prepared speech' });
+  let state = createEvent({ name: 'Prepared speech', panelSize: judgeCount });
   state = mutate(state, 'add-speakers', { people: [{ name: 'Ama', institution: 'Ashesi', category: 'Novice' }, { name: 'Kofi', institution: 'UG' }] });
   state = mutate(state, 'add-judges', { people: Array.from({ length: judgeCount }, (_, i) => ({ name: `Judge ${i + 1}`, institution: 'KNUST' })) });
   state = mutate(state, 'create-round', { name: 'Round 1', speakerIds: state.speakers.map(p => p.id) });
