@@ -29,6 +29,8 @@ VITE_SUPABASE_URL=http://127.0.0.1:54321 VITE_SUPABASE_ANON_KEY=anon-test \
   SUPABASE_SERVICE_ROLE_KEY=service-test npx vite --port 4173   # terminal 2
 npm run ps:e2e                            # terminal 3: Playwright walkthrough, screenshots in test-results/ps-e2e
 ```
+Self-contained Windows demo (what the owner runs locally): build with `VITE_SUPABASE_URL=http://127.0.0.1:4173 VITE_SUPABASE_ANON_KEY=demo-anon-key npx vite build --outDir <dir>/dist`, copy `api/`, `api-shared/`, `tests/helpers/ps-db.js`, the two PS SQL files, `scripts/ps-local-demo.mjs` (to the root), `node_modules/@electric-sql/pglite` and `node_modules/decimal.js`, add `{"type":"module"}` package.json, zip as `ps-demo.zip` next to a `START-PS-DEMO.bat` that expands it and runs `node ps-local-demo.mjs` (opens `/start`).
+
 Restart the fake backend for a clean database (it is in-memory). In a sandbox, set `PS_E2E_CHROMIUM=/opt/pw-browsers/chromium`.
 
 Env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, server-only `SUPABASE_SERVICE_ROLE_KEY`.
