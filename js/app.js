@@ -32,6 +32,8 @@ import { signOut } from './lib/auth-utils.js';
 import { getActiveTournamentId } from './lib/tournament-context.js';
 import { renderPrivatePortal } from './pages/private-portal.js';
 import { renderPublicLive } from './pages/public-live.js';
+import { renderPublicSpeaking } from './pages/tournament/public-speaking.js';
+import { renderPSPortal } from './pages/ps-portal.js';
 
 const routes = {
   '/': renderLogin,
@@ -62,6 +64,7 @@ const routes = {
   '/tournament/team-standings': renderTeamStandings,
   '/tournament/feedback': renderFeedback,
   '/tournament/analytics': renderAnalytics,
+  '/tournament/public-speaking': renderPublicSpeaking,
 };
 
 const publicRoutes = new Set(['/', '/login', '/signup', '/tournaments']);
@@ -79,6 +82,17 @@ async function router() {
   const path = getRoute();
   const routePath = path.split('?')[0];
   const app = document.getElementById('app');
+  app.onclick = null;
+  document.getElementById('ps-dialog')?.remove();
+
+  if (routePath.startsWith('/ps/portal/')) {
+    await renderPSPortal(app, routePath.slice('/ps/portal/'.length));
+    return;
+  }
+  if (routePath.startsWith('/ps/live/')) {
+    await renderPSPortal(app, null, routePath.slice('/ps/live/'.length));
+    return;
+  }
 
   // Handle dynamic /reg/:token routes
   if (routePath.startsWith('/reg/')) {

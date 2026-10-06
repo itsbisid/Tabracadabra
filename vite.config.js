@@ -9,6 +9,10 @@ export default defineConfig(({ mode }) => {
       {
         name: 'tabracadabra-local-api',
         configureServer(server) {
+          server.middlewares.use('/api/public-speaking', async (request, response) => {
+            const { default: handler } = await import('./api/public-speaking.js');
+            await handler(request, response);
+          });
           server.middlewares.use('/api/send-email', async (request, response) => {
             const { default: handler } = await import('./api/send-email.js');
             await handler(request, response);

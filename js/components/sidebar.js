@@ -123,6 +123,13 @@ function createTournamentSidebar(activePath, user, tournament) {
       </div>
 
       <div class="sidebar__section">
+        <div class="sidebar__section-title">Public speaking</div>
+        <a href="#/tournament/public-speaking" class="sidebar__link ${activePath === '/tournament/public-speaking' ? 'active' : ''}">
+          <span class="sidebar__link-icon">${icon('mic')}</span> Events & tabulation
+        </a>
+      </div>
+
+      <div class="sidebar__section">
         <div class="sidebar__section-title">Debating</div>
         <a href="#/tournament/debate-rounds" class="sidebar__link ${activePath === '/tournament/debate-rounds' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('list')}</span> Debate rounds

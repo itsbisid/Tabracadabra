@@ -155,3 +155,9 @@ create index if not exists push_subscriptions_tournament_id_idx
   <p>Built with ❤️ by the TabraCadabra Team</p>
 </div>
 
+
+## Public speaking
+
+TabraCadabra now includes an additional Public Speaking workspace for individual events, draws, judge ballots, standings, final breaks and private feedback. Existing debate workflows remain in place.
+
+Before using it, apply `supabase/public-speaking.sql` and follow [the setup and scoring guide](docs/public-speaking.md). Run `npm test` for public speaking rules/API checks and `npm run build` for the full application build.
