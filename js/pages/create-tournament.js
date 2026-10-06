@@ -2,6 +2,15 @@ import { renderAppLayout } from '../components/layout.js';
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
 import { setActiveTournamentId } from '../lib/tournament-context.js';
+import { psRequest } from '../lib/ps-service.js';
+import { psRulesFields, readPSRules, wirePSRules, formDataOf } from '../components/ps-rules-form.js';
+import { validateRules } from '../../api-shared/ps-rules.js';
+import { describeDebateScoring } from '../../api-shared/debate-scoring.js';
+import { debateScoringFieldset, readDebateScoring, wireDebateScoring } from '../components/debate-scoring-form.js';
+import { escapeHtml } from '../lib/html.js';
+
+const tracksOf = value => ({ debate: value !== 'Public speaking only', ps: value !== 'Debate only' });
+
 
 async function createTournamentRecord(tournament) {
   const payload = Object.fromEntries(
@@ -144,72 +153,57 @@ export async function renderCreateTournament(container) {
         <div style="display:flex; flex-direction:column; gap:24px;">
           
           <div style="display:flex; flex-direction:column; gap:8px;">
-            <label style="font-weight:600; font-size:14px;">Competition tracks</label>
-            <div style="font-size:13px; color:var(--color-text-muted);">Choose what this tournament runs first — debate tab, public speaking, or both. Options below update to match.</div>
-            <select id="tournament-tracks" class="form-input form-select" style="margin-top:4px;">
+            <label for="tournament-tracks" style="font-weight:600; font-size:14px;">Competition tracks</label>
+            <div style="font-size:13px; color:var(--color-text-muted);">Choose what this tournament runs. The settings below change to match.</div>
+            <select id="tournament-tracks" class="form-input form-select" style="margin-top:4px;" onchange="window.tcTracksChanged()">
               <option>Debate only</option>
               <option>Debate + Public speaking</option>
               <option>Public speaking only</option>
             </select>
           </div>
-          
-          <div style="display:flex; flex-direction:column; gap:8px;">
-            <label style="font-weight:600; font-size:14px;">Debate format</label>
-            <div style="font-size:13px; color:var(--color-text-muted);">Draw and tab logic still assume BP for now; your choice is stored for display and future formats.</div>
-            <select id="tournament-format" class="form-input form-select" style="margin-top:4px;">
-              <option>British Parliamentary (BP)</option>
-              <option>WSDC</option>
-              <option>Asian Parliamentary</option>
-            </select>
-          </div>
-          
-          <div style="display:flex; flex-direction:column; gap:8px;">
-            <label style="font-weight:600; font-size:14px;">Tournament structure</label>
-            <select id="tournament-structure" class="form-input form-select" style="margin-top:4px;">
-              <option>Prelims + break + out-rounds (standard BP)</option>
-              <option>Round robin → straight break to finals</option>
-              <option>Gold Coast (round robin + power pairing → break to finals)</option>
-              <option>Elimination / bracket emphasis</option>
-              <option>Other</option>
-            </select>
-          </div>
-          
-          <div style="display:flex; flex-direction:column; gap:8px;">
-            <label style="font-weight:600; font-size:14px;">Speaker Point Scale</label>
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;">
+
+          <section id="debate-settings" style="border:1px solid var(--color-border); border-radius:12px; padding:20px; display:flex; flex-direction:column; gap:20px;">
+            <h4 style="font-size:1.05rem; font-weight:800; margin:0;">Debate settings</h4>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <label for="tournament-format" style="font-weight:600; font-size:14px;">Debate format</label>
+              <div style="font-size:13px; color:var(--color-text-muted);">Draw and tab logic currently run British Parliamentary; other formats are stored for later.</div>
+              <select id="tournament-format" class="form-input form-select" style="margin-top:4px;">
+                <option>British Parliamentary (BP)</option>
+                <option>WSDC</option>
+                <option>Asian Parliamentary</option>
+              </select>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <label for="tournament-structure" style="font-weight:600; font-size:14px;">Tournament structure</label>
+              <select id="tournament-structure" class="form-input form-select" style="margin-top:4px;">
+                <option>Prelims + break + out-rounds (standard BP)</option>
+                <option>Round robin → straight break to finals</option>
+                <option>Gold Coast (round robin + power pairing → break to finals)</option>
+                <option>Elimination / bracket emphasis</option>
+                <option>Other</option>
+              </select>
+            </div>
+            ${debateScoringFieldset()}
+            <div style="border:1px solid var(--color-border); border-radius:8px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
               <div>
-                <label style="font-size:12px; color:var(--color-text-muted); display:block; margin-bottom:4px;">Minimum</label>
-                <input type="number" id="tournament-min-points" class="form-input" value="50">
+                <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Reply Speeches</div>
+                <div style="font-size:13px; color:var(--color-text-muted);">Enable reply speeches in each debate</div>
               </div>
-              <div>
-                <label style="font-size:12px; color:var(--color-text-muted); display:block; margin-bottom:4px;">Maximum</label>
-                <input type="number" id="tournament-max-points" class="form-input" value="100">
-              </div>
-              <div>
-                <label style="font-size:12px; color:var(--color-text-muted); display:block; margin-bottom:4px;">Step</label>
-                <select id="tournament-point-step" class="form-input form-select">
-                  <option>1.0</option>
-                  <option>0.5</option>
-                </select>
+              <div class="tc-switch" id="tc-replies-switch" onclick="this.classList.toggle('tc-on')">
+                <div class="tc-switch-knob"></div>
               </div>
             </div>
-          </div>
-          
-          <div style="border:1px solid var(--color-border); border-radius:8px; padding:16px; display:flex; justify-content:space-between; align-items:center;">
-            <div>
-              <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Reply Speeches</div>
-              <div style="font-size:13px; color:var(--color-text-muted);">Enable reply speeches in each debate</div>
+            <div style="border:1px solid var(--color-border); background:#F9FAFB; border-radius:8px; padding:16px;">
+              <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Team Point Allocation</div>
+              <div style="font-size:13px; color:var(--color-text-muted);">1st place: 3 points, 2nd place: 2 points, 3rd place: 1 point, 4th place: 0 points</div>
             </div>
-            <!-- Toggle switch UI -->
-            <div class="tc-switch" onclick="this.classList.toggle('tc-on')">
-              <div class="tc-switch-knob"></div>
-            </div>
-          </div>
-          
-          <div style="border:1px solid var(--color-border); background:#F9FAFB; border-radius:8px; padding:16px;">
-            <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Team Point Allocation</div>
-            <div style="font-size:13px; color:var(--color-text-muted);">1st place: 3 points, 2nd place: 2 points, 3rd place: 1 point, 4th place: 0 points</div>
-          </div>
+          </section>
+
+          <section id="ps-settings" class="ps" style="display:none; border:1px solid var(--color-border); border-radius:12px; padding:20px;">
+            <h4 style="font-size:1.05rem; font-weight:800; margin:0 0 4px;">Public speaking settings</h4>
+            <p class="ps-help" style="margin:0 0 16px;">This sets up your first speaking event. You can add more events (e.g. Impromptu, POI) later in Public speaking → Events & tabulation.</p>
+            <div data-ps-rules>${psRulesFields(null, true)}</div>
+          </section>
 
         </div>
         
@@ -222,6 +216,8 @@ export async function renderCreateTournament(container) {
       <!-- Step 3: Break Categories -->
       <div id="wizard-step-3" class="card" style="display:none; padding:32px;">
         <h3 style="font-size:1.4rem; font-weight:800; margin-bottom:8px;">Break Categories</h3>
+        <p id="ps-break-note" style="display:none; font-size:14px; padding:12px 16px; border-radius:8px; background:#F1F5F9; margin-bottom:16px;">Public speaking breaks are set with the event: the break size and number of preliminary rounds are under Public speaking settings → Advanced settings. Eligibility categories (e.g. Novice) come from each speaker's category.</p>
+        <div id="debate-breaks">
         <p style="font-size:14px; color:var(--color-text-muted); margin-bottom:24px;">Configure which team break categories this tournament will use.</p>
         
         <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:24px;">
@@ -324,6 +320,7 @@ export async function renderCreateTournament(container) {
             <div class="tc-switch-knob"></div>
           </div>
         </div>
+        </div>
         
         <div style="margin-top:32px; display:flex; justify-content:space-between;">
           <button class="btn btn--outline" onclick="window.setWizardStep(2)">Back</button>
@@ -364,8 +361,9 @@ export async function renderCreateTournament(container) {
             <div id="review-tracks" style="font-weight:500;">Debate only</div>
           </div>
           
+          <div id="review-debate">
           <div style="height:1px; background:var(--color-border); margin:16px 0;"></div>
-          
+          <div style="font-weight:700; font-size:13px; margin-bottom:12px;">Debate</div>
           <div style="display:grid; grid-template-columns:180px 1fr; gap:12px; font-size:14px; align-items:start;">
             <div style="color:var(--color-text-muted);">Debate format:</div>
             <div id="review-format" style="font-weight:500;">British Parliamentary (BP)</div>
@@ -373,8 +371,8 @@ export async function renderCreateTournament(container) {
             <div style="color:var(--color-text-muted);">Structure:</div>
             <div id="review-structure" style="font-weight:500;">Prelims + break + out-rounds (standard BP)</div>
             
-            <div style="color:var(--color-text-muted);">Speaker points:</div>
-            <div style="font-weight:500;">50 – 100 (step: 1)</div>
+            <div style="color:var(--color-text-muted);">Speaker scoring:</div>
+            <div id="review-speaker-points" style="font-weight:500;">Not set</div>
             
             <div style="color:var(--color-text-muted);">Reply speeches:</div>
             <div id="review-replies" style="font-weight:500;">Disabled</div>
@@ -382,10 +380,16 @@ export async function renderCreateTournament(container) {
             <div style="color:var(--color-text-muted);">Team points:</div>
             <div style="font-weight:500;">3 / 2 / 1 / 0</div>
           </div>
+          </div>
+          <div id="review-ps" style="display:none;">
+            <div style="height:1px; background:var(--color-border); margin:16px 0;"></div>
+            <div style="font-weight:700; font-size:13px; margin-bottom:12px;">Public speaking</div>
+            <div id="review-ps-body" style="font-size:14px;"></div>
+          </div>
         </div>
 
         <!-- BREAK CATEGORIES -->
-        <div style="border:1px solid var(--color-border); border-radius:8px; padding:24px; margin-bottom:24px;">
+        <div id="review-breaks" style="border:1px solid var(--color-border); border-radius:8px; padding:24px; margin-bottom:24px;">
           <h4 style="font-weight:700; font-size:13px; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">Break Categories</h4>
           <div style="display:flex; justify-content:space-between; font-size:14px; align-items:center;">
             <div style="font-weight:600;">Open</div>
@@ -406,6 +410,30 @@ export async function renderCreateTournament(container) {
   `;
 
   await renderAppLayout(container, '/create-tournament', 'Host Tournament', 'Finalize your tournament settings and launch.', content);
+  const step2 = document.getElementById('wizard-step-2');
+  const psHolder = () => document.querySelector('#ps-settings [data-ps-rules]');
+  wirePSRules(document.getElementById('ps-settings'), { request: input => psRequest({ action: 'preview-rules', input }), creating: () => true });
+
+  window.tcTracksChanged = () => {
+    const tracks = tracksOf(document.getElementById('tournament-tracks').value);
+    document.getElementById('debate-settings').style.display = tracks.debate ? 'flex' : 'none';
+    document.getElementById('ps-settings').style.display = tracks.ps ? 'block' : 'none';
+    document.getElementById('debate-breaks').style.display = tracks.debate ? 'block' : 'none';
+    document.getElementById('ps-break-note').style.display = tracks.ps ? 'block' : 'none';
+  };
+  wireDebateScoring(document.getElementById('debate-settings'));
+
+  // Checks the chosen tracks' settings; returns an error message or ''.
+  const formatProblem = () => {
+    const tracks = tracksOf(document.getElementById('tournament-tracks').value);
+    try { if (tracks.debate) readDebateScoring(step2); } catch (error) { return `Debate scoring: ${error.message}`; }
+    if (tracks.ps) {
+      const rules = readPSRules(formDataOf(psHolder()));
+      if (!String(rules.name || '').trim()) return 'Public speaking: give the speaking event a name (e.g. Prepared Speech).';
+      try { validateRules(rules); } catch (error) { return `Public speaking: ${error.message}`; }
+    }
+    return '';
+  };
 
   window.tcCreateTournament = async () => {
     const btn = document.querySelector('button[onclick="window.tcCreateTournament()"]');
@@ -423,16 +451,31 @@ export async function renderCreateTournament(container) {
       end_date: getVal('#tournament-end-date'),
       timezone: getVal('#tournament-timezone'),
       location: getVal('#tournament-location').trim(),
-      settings: {
-        tracks: getVal('#tournament-tracks'),
-        format: getVal('#tournament-format'),
-        structure: getVal('#tournament-structure'),
-        min_points: Number(getVal('#tournament-min-points')),
-        max_points: Number(getVal('#tournament-max-points')),
-        point_step: Number(getVal('#tournament-point-step')),
-        replies_enabled: document.querySelector('#wizard-step-2 .tc-switch').classList.contains('tc-on')
-      }
+      settings: (() => {
+        const tracks = tracksOf(getVal('#tournament-tracks'));
+        const settings = { tracks: getVal('#tournament-tracks') };
+        if (tracks.debate) {
+          const scoring = readDebateScoring(step2);
+          Object.assign(settings, {
+            format: getVal('#tournament-format'),
+            structure: getVal('#tournament-structure'),
+            min_points: scoring.min, max_points: scoring.max, point_step: scoring.step,
+            debate_scoring: scoring,
+            replies_enabled: document.getElementById('tc-replies-switch').classList.contains('tc-on')
+          });
+        }
+        return settings;
+      })()
     };
+    const problem = formatProblem();
+    if (problem) {
+      alert(problem);
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      window.setWizardStep(2);
+      return;
+    }
+    const psRules = tracksOf(newTournament.settings.tracks).ps ? readPSRules(formDataOf(psHolder())) : null;
 
     if (!newTournament.name || !newTournament.short_name || !newTournament.description || !newTournament.start_date || !newTournament.end_date || !newTournament.location) {
       alert('Please complete all required tournament details before creating.');
@@ -477,11 +520,19 @@ export async function renderCreateTournament(container) {
     } else {
       await createOwnerMembership(data?.id, session.user.id);
       setActiveTournamentId(data?.id);
-      window.tcNavigate('/tournament/dashboard');
+      if (psRules) {
+        try { await psRequest({ action: 'create', tournamentId: data.id, input: psRules }); }
+        catch (error) { alert(`Your tournament was created, but the public speaking event could not be saved yet (${error.message}). You can add it under Public speaking → Events & tabulation.`); }
+      }
+      window.tcNavigate(newTournament.settings.tracks === 'Public speaking only' ? '/tournament/public-speaking' : '/tournament/dashboard');
     }
   };
 
   window.setWizardStep = (step) => {
+    if (step > 2 && document.getElementById('wizard-step-2').style.display !== 'none') {
+      const problem = formatProblem();
+      if (problem) { alert(problem); return; }
+    }
     // Refresh review step if going to step 4
     if (step === 4) {
         const getV = (sel) => document.querySelector(sel)?.value || 'N/A';
@@ -498,9 +549,16 @@ export async function renderCreateTournament(container) {
         setText('review-tracks', getV('#tournament-tracks'));
         setText('review-format', getV('#tournament-format'));
         setText('review-structure', getV('#tournament-structure'));
-        const speakerPointsReview = document.getElementById('review-speaker-points') || Array.from(document.querySelectorAll('#wizard-step-4 div')).find(el => el.textContent === 'Speaker points:')?.nextElementSibling;
-        if (speakerPointsReview) speakerPointsReview.innerText = `${getV('#tournament-min-points')} to ${getV('#tournament-max-points')} (step: ${getV('#tournament-point-step')})`;
-        setText('review-replies', document.querySelector('#wizard-step-2 .tc-switch')?.classList.contains('tc-on') ? 'Enabled' : 'Disabled');
+        const tracks = tracksOf(getV('#tournament-tracks'));
+        document.getElementById('review-debate').style.display = tracks.debate ? 'block' : 'none';
+        document.getElementById('review-breaks').style.display = tracks.debate ? 'block' : 'none';
+        document.getElementById('review-ps').style.display = tracks.ps ? 'block' : 'none';
+        try { setText('review-speaker-points', describeDebateScoring(readDebateScoring(step2))); } catch (error) { setText('review-speaker-points', error.message); }
+        setText('review-replies', document.getElementById('tc-replies-switch')?.classList.contains('tc-on') ? 'Enabled' : 'Disabled');
+        if (tracks.ps) {
+          const r = readPSRules(formDataOf(psHolder()));
+          document.getElementById('review-ps-body').innerHTML = `<div><strong>${escapeHtml(r.name || 'Unnamed event')}</strong> · ${escapeHtml(r.type)}</div><div style="margin-top:6px;">Criteria: ${r.rubric.map(c => `${escapeHtml(c.name)} ${c.weight}%`).join(', ')}</div><div style="margin-top:6px; color:var(--color-text-muted);">${r.scoring === 'rank' ? 'Rank-based' : 'Weighted score'} · ${r.minHeat}–${r.maxHeat} speakers per heat · ${r.panelSize} judge(s) per heat · ${r.durationSeconds}s speeches · ${r.preliminaryRounds} prelim rounds · break to ${r.breakSize}</div>`;
+        }
     }
 
     // Hide all

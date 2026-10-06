@@ -32,6 +32,12 @@ This change does not automatically run production SQL, merge a branch, deploy a 
 - Private links expire after 14 days and are stored only as hashes. Generating a replacement or revoking immediately ends the previous link and its sessions. Withdrawn participants cannot use their links.
 - CSV standings and speaker exports; print styling for draws/results; recent change history.
 
+## Choosing the format
+
+When creating a tournament, **Competition tracks** decides what you set up: *Debate only* shows debate settings; *Public speaking only* shows the public speaking settings (template, criteria and weights, heats, timing, live calculation preview) and creates the first speaking event; *Debate + Public speaking* shows both. The sidebar and the Settings page follow the same choice, and tracks can be changed later in Settings → Competition & scoring.
+
+Debate speaker scoring is configurable: one score per speaker with a minimum, maximum and increment, or 1–10 criteria (e.g. Matter /40, Manner /40, Method /20) whose marks add up to the speaker score. Ballots and the judge portal enforce it on the server. Tournaments created before this setting keep the previous 60–80 range.
+
 ## How draws are made (pairing / sectioning)
 
 Tab clicks **Generate draw** on a draft round; the server (`api-shared/ps-draw.js`) proposes sections, speaking order and judges, explains them, and nothing is saved until tab reviews and saves. Every draw has a seed; entering the same seed reproduces it.

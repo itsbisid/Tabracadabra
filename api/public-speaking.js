@@ -55,14 +55,14 @@ export default async function handler(request, response) {
     } else {
       const session = await getSessionContext(request);
       if (!session) fail('Sign in to manage public speaking.', 401);
+      // Read-only and tournament-independent: validates draft rules (also used before a tournament exists).
+      if (action === 'preview-rules') return sendJson(response, 200, previewRules(input, input.sampleScores));
       if (payload.eventId) row = await eventRow(payload.eventId);
       const tournamentId = row?.tournament_id || payload.tournamentId;
       if (typeof tournamentId !== 'string' || !tournamentId || tournamentId.length > 100) fail('Choose a tournament.');
       if (!(await canAdministerTournament(session, tournamentId))) fail('Only this tournament’s administrators can manage public speaking.', 403);
       actor = { role: 'admin', id: session.user.id };
       if (action === 'list') return sendJson(response, 200, { events: await listEvents(tournamentId) });
-      // Read-only: validates draft rules and returns a hand-checkable sample ballot.
-      if (action === 'preview-rules') return sendJson(response, 200, previewRules(input, input.sampleScores));
       if (action === 'create') {
         const created = await commitEvent({ id: randomUUID(), tournament_id: tournamentId, version: 0 }, createEvent(input), actor, action, { requestKey, request: payload });
         return sendJson(response, 200, { id: created.id, version: created.version, state: projectEvent(created.state, actor) });

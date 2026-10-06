@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "ps:fake-supabase": "node scripts/ps-fake-supabase.mjs",
     "ps:e2e": "node scripts/ps-e2e.mjs",
-    "ps:judge-e2e": "node scripts/ps-judge-e2e.mjs"
+    "ps:judge-e2e": "node scripts/ps-judge-e2e.mjs",
+    "ps:wizard-e2e": "node scripts/ps-wizard-e2e.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

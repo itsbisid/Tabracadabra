@@ -3,6 +3,11 @@ import { icon } from '../../components/icons.js';
 import { supabase } from '../../lib/supabase.js';
 import { clearActiveTournamentId, requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { deleteTournament } from '../../lib/tournament-service.js';
+import { debateScoringFor, describeDebateScoring } from '../../../api-shared/debate-scoring.js';
+import { debateScoringFieldset, readDebateScoring, wireDebateScoring } from '../../components/debate-scoring-form.js';
+import { escapeHtml } from '../../lib/html.js';
+
+const TRACKS = ['Debate only', 'Debate + Public speaking', 'Public speaking only'];
 
 export async function renderSettings(container) {
   const tournamentId = requireActiveTournamentId();
@@ -87,7 +92,33 @@ export async function renderSettings(container) {
     }
   };
 
+  let currentTournament = {};
+  window.tcTracksPreview = () => {
+    const value = document.getElementById('set-tracks').value;
+    document.getElementById('set-debate-scoring').style.display = value === 'Public speaking only' ? 'none' : 'block';
+    document.getElementById('set-ps-link').style.display = value === 'Debate only' ? 'none' : 'block';
+  };
+  window.tcSaveCompetition = async () => {
+    const btn = document.getElementById('save-competition-btn');
+    const tracks = document.getElementById('set-tracks').value;
+    const settings = { ...(currentTournament.settings || {}), tracks };
+    try {
+      if (tracks !== 'Public speaking only') {
+        const scoring = readDebateScoring(document.getElementById('set-debate-scoring'));
+        Object.assign(settings, { debate_scoring: scoring, min_points: scoring.min, max_points: scoring.max, point_step: scoring.step });
+      }
+    } catch (error) { alert(`Debate scoring: ${error.message}`); return; }
+    btn.disabled = true; btn.innerHTML = 'Saving...';
+    const { error } = await supabase.from('tournaments').update({ settings }).eq('id', tournamentId);
+    btn.disabled = false; btn.innerHTML = 'Save competition settings';
+    if (error) { alert(error.message); return; }
+    location.reload();
+  };
+
   const renderUI = (t) => {
+    currentTournament = t;
+    const tracks = t.settings?.tracks || 'Debate + Public speaking';
+    const debateScoring = debateScoringFor(t.settings);
     const status = (t.status || 'draft').toLowerCase();
     const healthRows = backendHealth?.tables || [];
     const envReady = backendHealth?.env ? Object.values(backendHealth.env).every(Boolean) : false;
@@ -131,6 +162,31 @@ export async function renderSettings(container) {
 
             <div style="margin-top:24px; padding-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end;">
               <button id="save-general-btn" class="btn btn--primary" onclick="window.tcSaveGeneralInfo()">Save Changes</button>
+            </div>
+          </div>
+
+          <!-- COMPETITION & SCORING -->
+          <div class="card" style="padding:24px;">
+            <h3 style="font-weight:800; font-size:16px; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+              <span style="color:var(--color-primary);">${icon('settings', 20)}</span> Competition & scoring
+            </h3>
+            <p style="font-size:13px; color:#64748b; margin-bottom:16px;">Choose which tracks this tournament runs. Menus and setup follow this choice.</p>
+            <div class="form-group">
+              <label class="form-label" for="set-tracks">Competition tracks</label>
+              <select id="set-tracks" class="form-input form-select" onchange="window.tcTracksPreview()">${TRACKS.map(x => `<option ${x === tracks ? 'selected' : ''}>${x}</option>`).join('')}</select>
+            </div>
+            <div id="set-debate-scoring" style="display:${tracks === 'Public speaking only' ? 'none' : 'block'}; margin-top:16px;">
+              <div style="font-weight:700; font-size:14px; margin-bottom:8px;">Debate speaker scoring</div>
+              <p style="font-size:12px; color:#64748b; margin-bottom:12px;">Currently: ${escapeHtml(describeDebateScoring(debateScoring))}. Changes apply to ballots entered from now on; ballots already saved keep their scores.</p>
+              ${debateScoringFieldset(debateScoring)}
+            </div>
+            <div id="set-ps-link" style="display:${tracks === 'Debate only' ? 'none' : 'block'}; margin-top:16px; padding:16px; border-radius:8px; background:#F1F5F9;">
+              <div style="font-weight:700; font-size:14px; margin-bottom:4px;">Public speaking settings</div>
+              <p style="font-size:13px; color:#64748b; margin:0 0 10px;">Each speaking event has its own criteria, weights, timing, heats and breaks.</p>
+              <a class="btn btn--outline" href="#/tournament/public-speaking">Open public speaking settings</a>
+            </div>
+            <div style="margin-top:24px; padding-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end;">
+              <button id="save-competition-btn" class="btn btn--primary" onclick="window.tcSaveCompetition()">Save competition settings</button>
             </div>
           </div>
 
@@ -191,7 +247,10 @@ export async function renderSettings(container) {
       </div>
     `;
 
-    renderAppLayout(container, '/tournament/settings', 'Settings', 'Manage core tournament details and lifecycle.', content);
+    Promise.resolve(renderAppLayout(container, '/tournament/settings', 'Settings', 'Manage core tournament details and lifecycle.', content)).then(() => {
+      const box = document.getElementById('set-debate-scoring');
+      if (box) wireDebateScoring(box);
+    });
   };
 
   fetchSettings();

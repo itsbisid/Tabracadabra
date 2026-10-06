@@ -23,6 +23,7 @@ const { newToken, hashToken } = await import('./api-shared/ps-access.js');
 const TOURNAMENT_ID = '4a16320d-5ccc-4e53-aaca-b9033af9371c';
 const OWNER = { id: '11111111-1111-4111-8111-111111111111', email: 'demo-owner@example.test', aud: 'authenticated', role: 'authenticated', user_metadata: { full_name: 'Demo Organiser' } };
 const { db } = await createPSDatabase({ tournamentId: TOURNAMENT_ID });
+const tournaments = new Map([[TOURNAMENT_ID, { id: TOURNAMENT_ID, owner_id: OWNER.id, name: 'DEMO Tournament', short_name: 'DEMO', status: 'active', settings: { tracks: 'Debate + Public speaking' }, created_at: new Date().toISOString() }]]);
 
 // ---- Seed a demo event: 12 speakers, 4 judges, Round 1 drawn and open, one ballot submitted.
 const admin = { role: 'admin', id: OWNER.id };
@@ -51,11 +52,12 @@ const session = { access_token: 'demo-token', refresh_token: 'demo-refresh', tok
 const loginPage = `<!doctype html><meta charset="utf-8"><title>Opening demo…</title><script>
 localStorage.setItem('sb-127-auth-token', ${JSON.stringify(JSON.stringify(session))});
 localStorage.setItem('active_tournament_id', '${TOURNAMENT_ID}');
-location.replace('/#/tournament/public-speaking');</script>`;
+location.replace(new URLSearchParams(location.search).get('to') === 'new' ? '/#/create-tournament' : '/#/tournament/public-speaking');</script>`;
 
 const startPage = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tabracadabra PS demo</title>
 <style>body{font-family:system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#0f2b5b;background:#f4f7fb}a{display:block;padding:16px 20px;margin:12px 0;border-radius:10px;background:#0f2b5b;color:#fff;text-decoration:none;font-weight:600}a span{display:block;font-weight:400;opacity:.8;font-size:14px;margin-top:4px}p{color:#526174}</style>
 <h1>Public Speaking — local demo</h1><p>All names and scores are made-up demo data. Nothing is saved: closing the black window resets everything.</p>
+<a href="/demo?to=new" target="_blank">Create a new tournament<span>Try the setup wizard: Debate only, Public speaking only, or both — each with its own settings.</span></a>
 <a href="/demo" target="_blank">Organiser / tab view<span>Set up events, rooms, draws, approve ballots, results and links.</span></a>
 <a href="/#/ps/portal/${judgeLink}" target="_blank">Judge portal (Room 1)<span>Score Room 1 on a phone-style ballot. Each link opens once per browser tab.</span></a>
 <a href="/#/ps/portal/${speakerLink}" target="_blank">Speaker portal (Demo Speaker 1)<span>Room, speaking order, released results and feedback.</span></a>`;
@@ -72,7 +74,19 @@ const server = http.createServer(async (req, res) => {
     if (rpc) { const [result, status] = await callRpc(db, rpc[1], JSON.parse(body || '{}')); return json(status, result); }
     if (url.pathname === '/auth/v1/user') return json(200, OWNER);
     if (url.pathname.startsWith('/auth/v1/')) return json(200, {});
-    if (url.pathname === '/rest/v1/tournaments') return json(200, [{ id: TOURNAMENT_ID, owner_id: OWNER.id, name: 'DEMO Tournament', status: 'active', format: 'bp', created_at: new Date().toISOString() }]);
+    if (url.pathname === '/rest/v1/tournaments') {
+      const single = String(req.headers.accept || '').includes('vnd.pgrst.object');
+      const idFilter = url.searchParams.get('id')?.replace(/^eq\./, '');
+      if (req.method === 'POST') {
+        const row = { id: randomUUID(), owner_id: OWNER.id, status: 'draft', created_at: new Date().toISOString(), ...JSON.parse(body || '{}') };
+        tournaments.set(row.id, row);
+        await db.query('insert into public.tournaments(id, name) values($1, $2)', [row.id, row.name || 'Demo']);
+        return json(201, single ? row : [row]);
+      }
+      if (req.method === 'PATCH') { const row = tournaments.get(idFilter); if (row) Object.assign(row, JSON.parse(body || '{}')); return json(200, single ? row : [row].filter(Boolean)); }
+      const rows = idFilter ? [tournaments.get(idFilter)].filter(Boolean) : [...tournaments.values()];
+      return json(200, single ? rows[0] || null : rows);
+    }
     if (url.pathname.startsWith('/rest/v1/') || url.pathname.startsWith('/realtime/') || url.pathname.startsWith('/api/')) return json(200, []);
     const file = path.join(DIST, decodeURIComponent(url.pathname));
     const target = file.startsWith(DIST) && fs.existsSync(file) && fs.statSync(file).isFile() ? file : path.join(DIST, 'index.html');

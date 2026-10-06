@@ -132,6 +132,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 - 2026-10-06 — Stage 2: configurable rules engine, live preview, capacity planner, penalties, structured feedback, ballot review screen; browser walkthrough + fake Supabase harness.
 - 2026-10-06 — Draw/pairing: researched NSDA/Tabroom/SpeechWire speech sectioning; built ps-draw.js + `propose-draw` API + draw dialog report; 9 draw tests.
 - 2026-10-06 — Judge walkthrough (`npm run ps:judge-e2e`, 28 checks on a phone viewport against the local demo): validation, drafts, reload, review, penalties, offline submit, lock, peer feedback privacy, speaker isolation. Added a "Next" card (judge: outstanding ballot; speaker: room and speaking position), own room first, honest non-anonymous wording for peer evaluations.
+- 2026-10-06 — Format-driven setup: the creation wizard shows Debate settings, Public speaking settings (shared form `js/components/ps-rules-form.js`), or both, based on Competition tracks; creating a PS tournament also creates its first speaking event. Debate speaker scoring is configurable (`api-shared/debate-scoring.js`, editor `js/components/debate-scoring-form.js`): one score with min/max/step, or 1–10 criteria summed per speaker; enforced in the ballot modal and `api/portal-ballot.js` (legacy tournaments keep 60–80). Sidebar and Settings follow the tracks. Tests: `tests/debate-scoring.test.js`, `npm run ps:wizard-e2e` (18 checks).
 - 2026-10-06 — Stage 3: hashed private links with session exchange, revoke/rotate, rate limits, share controls.
 
 ## In progress
@@ -144,6 +145,9 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 - Server computes all totals; clients never send totals.
 
 ## Known issues
+
+- Debate criterion marks are validated but only speaker totals are stored (the `ballots` table has no column for the breakdown). Add a `jsonb` column (e.g. `s1_marks`, `s2_marks`) if per-criterion debate analytics are wanted.
+- Debate format other than BP (WSDC, Asian Parliamentary) is stored but draw/tab logic is BP only.
 
 - Every commit rewrites the whole event through `ps_v2_commit` (simple and transactional, but O(event size)). Fine for typical events; for very large events consider per-ballot write paths.
 - Removing a judge from a *published* heat is not supported yet (amendment workflow is item 7).
