@@ -2,13 +2,16 @@ import {
   assertCanAccessPairing,
   collectBody,
   fetchPairingBundle,
+  selectRows,
   sendJson,
   upsertRows,
   validateTokenProfile,
   verifyPortalToken
 } from '../api-shared/portal-utils.js';
+import { debateScoringFor, speakerScore } from '../api-shared/debate-scoring.js';
 
-function validateBallotRows(pairing, rows) {
+// Speaker scores follow the tournament's debate scoring settings (legacy tournaments: 60–80).
+function validateBallotRows(pairing, rows, scoring) {
   const teamIds = [pairing.og_team_id, pairing.oo_team_id, pairing.cg_team_id, pairing.co_team_id].filter(Boolean);
   if (!Array.isArray(rows) || rows.length !== teamIds.length) {
     throw new Error('A complete ballot is required for every team in the room.');
@@ -21,8 +24,8 @@ function validateBallotRows(pairing, rows) {
 
   rows.forEach(row => {
     if (!teamIds.includes(row.team_id)) throw new Error('Ballot contains a team outside this room.');
-    if (Number(row.s1_points) < 60 || Number(row.s1_points) > 80) throw new Error('Speaker 1 points must be between 60 and 80.');
-    if (Number(row.s2_points) < 60 || Number(row.s2_points) > 80) throw new Error('Speaker 2 points must be between 60 and 80.');
+    row.s1_points = speakerScore(scoring, { total: row.s1_points, marks: row.s1_marks }, 'Speaker 1');
+    row.s2_points = speakerScore(scoring, { total: row.s2_points, marks: row.s2_marks }, 'Speaker 2');
   });
 }
 
@@ -47,7 +50,8 @@ export default async function handler(request, response) {
       throw new Error('A confirmed ballot already exists for this room. Ask the tab room to unlock it before resubmitting.');
     }
 
-    validateBallotRows(pairing, payload.ballots);
+    const [tournament] = await selectRows('tournaments', `?id=eq.${encodeURIComponent(pairing.tournament_id)}&select=settings`);
+    validateBallotRows(pairing, payload.ballots, debateScoringFor(tournament?.settings));
     const ballots = payload.ballots.map(row => {
       const rank = Number(row.rank);
       const s1 = Number(row.s1_points);

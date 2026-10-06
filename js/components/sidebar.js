@@ -85,7 +85,14 @@ function createMainSidebar(activePath, user) {
   `;
 }
 
+// Which tracks a tournament runs. Older tournaments without the setting show everything.
+export function tournamentTracks(tournament) {
+  const value = tournament?.settings?.tracks;
+  return { debate: value !== 'Public speaking only', ps: !value || value !== 'Debate only' };
+}
+
 function createTournamentSidebar(activePath, user, tournament) {
+  const tracks = tournamentTracks(tournament);
   return `
     <aside class="sidebar">
       <div class="sidebar__logo" style="padding: 16px;">
@@ -122,7 +129,14 @@ function createTournamentSidebar(activePath, user, tournament) {
         </a>
       </div>
 
-      <div class="sidebar__section">
+      ${tracks.ps ? `<div class="sidebar__section">
+        <div class="sidebar__section-title">Public speaking</div>
+        <a href="#/tournament/public-speaking" class="sidebar__link ${activePath === '/tournament/public-speaking' ? 'active' : ''}">
+          <span class="sidebar__link-icon">${icon('mic')}</span> Events & tabulation
+        </a>
+      </div>` : ''}
+
+      ${tracks.debate ? `<div class="sidebar__section">
         <div class="sidebar__section-title">Debating</div>
         <a href="#/tournament/debate-rounds" class="sidebar__link ${activePath === '/tournament/debate-rounds' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('list')}</span> Debate rounds
@@ -139,13 +153,13 @@ function createTournamentSidebar(activePath, user, tournament) {
         <a href="#/tournament/publish" class="sidebar__link ${activePath === '/tournament/publish' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('share')}</span> Publish & Live URL
         </a>
-      </div>
+      </div>` : ''}
 
       <div class="sidebar__section">
         <div class="sidebar__section-title">Participants</div>
-        <a href="#/tournament/teams" class="sidebar__link ${activePath === '/tournament/teams' ? 'active' : ''}">
+        ${tracks.debate ? `<a href="#/tournament/teams" class="sidebar__link ${activePath === '/tournament/teams' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('users')}</span> Teams
-        </a>
+        </a>` : ''}
         <a href="#/tournament/adjudicators" class="sidebar__link ${activePath === '/tournament/adjudicators' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('user')}</span> Adjudicators
         </a>
@@ -154,7 +168,7 @@ function createTournamentSidebar(activePath, user, tournament) {
         </a>
       </div>
       
-      <div class="sidebar__section">
+      ${tracks.debate ? `<div class="sidebar__section">
         <div class="sidebar__section-title">Debating Results</div>
         <a href="#/tournament/speaker-tab" class="sidebar__link ${activePath === '/tournament/speaker-tab' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('barChart')}</span> Speaker tab
@@ -162,7 +176,7 @@ function createTournamentSidebar(activePath, user, tournament) {
         <a href="#/tournament/team-standings" class="sidebar__link ${activePath === '/tournament/team-standings' ? 'active' : ''}">
           <span class="sidebar__link-icon">${icon('trophy')}</span> Rankings
         </a>
-      </div>
+      </div>` : ''}
 
       <div class="sidebar__section">
         <div class="sidebar__section-title">Insights</div>
