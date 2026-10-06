@@ -1,6 +1,18 @@
 {
   "rewrites": [
     {
+      "source": "/api/push-config",
+      "destination": "/api/push?route=config"
+    },
+    {
+      "source": "/api/push-status",
+      "destination": "/api/push?route=status"
+    },
+    {
+      "source": "/api/push-subscribe",
+      "destination": "/api/push?route=subscribe"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path*"
     },
