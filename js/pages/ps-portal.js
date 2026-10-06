@@ -36,12 +36,28 @@ export async function renderPSPortal(container, linkToken, eventId = null) {
     }
   };
 
+  // The first thing each person sees is what they need to do next.
+  function nextAction(event, person) {
+    if (!person) return '';
+    const mine = event.rounds.flatMap(round => round.rooms.filter(room => (person.role === 'judge' ? room.judges : room.speakers).includes(person.id)).map(room => ({ round, room })));
+    if (person.role === 'judge') {
+      const todo = mine.filter(({ round, room }) => round.status === 'open' && !['submitted', 'approved'].includes(round.ballots.find(b => b.roomId === room.id && b.judgeId === person.id)?.status));
+      if (!todo.length) return card('Next', `<p><strong>No ballots outstanding.</strong> ${mine.length ? 'Thank you, your ballots are in.' : 'You have not been assigned to a room yet.'}</p>`);
+      return card('Next', todo.map(({ round, room }) => { const b = round.ballots.find(x => x.roomId === room.id && x.judgeId === person.id); return `<p><strong>${h(round.name)} ballot ${b ? 'in progress (draft saved)' : 'outstanding'}</strong> · ${h(room.name)} · ${room.speakers.length} speakers</p>${button(b ? 'Continue ballot' : 'Open ballot', `data-action="ballot" data-round="${round.id}" data-room="${room.id}"`)}`; }).join(''));
+    }
+    const upcoming = mine.filter(({ round }) => round.status !== 'completed').at(-1);
+    if (!upcoming) return card('Next', `<p>${mine.length ? 'Your rounds so far are complete. Results and feedback appear here when tab releases them.' : 'Your room will appear here when the draw is published.'}</p>`);
+    const position = upcoming.room.speakers.indexOf(person.id) + 1;
+    return card('Next', `<p><strong>${h(upcoming.round.name)}: ${h(upcoming.room.name)}</strong></p><p>You speak <strong>${position}${['th', 'st', 'nd', 'rd'][position % 10 > 3 || Math.floor(position / 10) === 1 ? 0 : position % 10]}</strong> of ${upcoming.room.speakers.length}.</p>`);
+  }
+
   function render() {
     const event = current.state, person = event.participant;
     container.innerHTML = `<main class="ps ps-portal"><header class="ps-top"><div><span class="ps-eyebrow">TABRACADABRA · PUBLIC SPEAKING</span><h1>${h(event.name)}</h1><p>${person ? `Welcome, ${h(person.name)} · ${h(person.role)}` : 'Published draws and results'}</p></div><div class="ps-actions">${button('Refresh', 'data-action="refresh"', true)}${participant ? button('Leave portal', 'data-action="leave"', true) : ''}</div></header>${participant ? '<p class="ps-help">This is your private portal. Anyone who has your link can open it, so do not share or post it.</p>' : ''}<p class="ps-error" id="ps-portal-error" role="alert" hidden></p>
+      ${nextAction(event, person)}
       ${person?.role === 'speaker' ? card('Your event', `<p>${h(event.type)} · Speech length: ${event.durationSeconds} seconds${event.penalty?.method === 'overtime' ? ' · overtime penalties apply' : ''}</p>${person.checkedIn ? '<strong>✓ You are checked in</strong>' : button('Check in', 'data-action="check-in"')}<p class="ps-help">Find your room below. Scores and feedback appear when released by tab.</p>`) : ''}
       ${person?.role === 'judge' ? card('Your judging tasks', `<p>Open your assigned ballot below. Score every criterion and rank each speaker, then submit. Tab will approve the ballot.</p>${table(['Criterion', 'Maximum', 'Weight'], event.rubric.map(c => [h(c.name), c.max, `${c.weight}%`]))}`) : ''}
-      ${event.rounds.length ? event.rounds.map(round => card(round.name, `<div class="ps-actions"><span class="badge">${h(round.stage)} · ${h(round.status)}</span></div>${round.rooms.map(room => {
+      ${event.rounds.length ? event.rounds.map(round => card(round.name, `<div class="ps-actions"><span class="badge">${h(round.stage)} · ${h(round.status)}</span></div>${[...round.rooms].sort((a, b) => Number((person && (person.role === 'speaker' ? b.speakers : b.judges).includes(person.id)) || 0) - Number((person && (person.role === 'speaker' ? a.speakers : a.judges).includes(person.id)) || 0)).map(room => {
         const assigned = person && (person.role === 'speaker' ? room.speakers : room.judges).includes(person.id);
         const ballot = person?.role === 'judge' ? round.ballots.find(b => b.roomId === room.id && b.judgeId === person.id) : null;
         return `<div class="ps-room ${assigned ? 'ps-room--yours' : ''}"><h3>${h(room.name)} ${assigned ? '· Your room' : ''}</h3><ol>${room.speakers.map(id => `<li>${h(nameOf(event.speakers, id))}</li>`).join('')}</ol><p class="ps-help">Judges: ${room.judges.map(id => h(nameOf(event.judges, id))).join(', ')}</p>${assigned && person.role === 'judge' ? `<p>Ballot: <strong>${h(ballot?.status || 'Not started')}</strong>${ballot ? ` · Last saved ${h(new Date(ballot.updatedAt).toLocaleString())}` : ''}</p>${round.status === 'open' && (!ballot || ballot.status === 'draft') ? button(ballot ? 'Continue ballot' : 'Open ballot', `data-action="ballot" data-round="${round.id}" data-room="${room.id}"`) : ''}${ballot ? button('View saved ballot', `data-action="view-ballot" data-round="${round.id}" data-room="${room.id}"`, true) : ''}` : ''}
@@ -66,7 +82,7 @@ export async function renderPSPortal(container, linkToken, eventId = null) {
       if (action === 'feedback') {
         const round = event.rounds.find(r => r.id === btn.dataset.round);
         const prior = round.judgeFeedback.find(f => f.roomId === btn.dataset.room && f.toId === btn.dataset.judge);
-        showDialog('Confidential judge feedback', `<form class="ps-stack"><p>Only tournament administrators can read this evaluation.</p>${field('Rating', select('rating', [[1, '1 — Needs improvement'], [2, '2'], [3, '3 — Satisfactory'], [4, '4'], [5, '5 — Excellent']], prior?.rating || 3))}${field('Comments', `<textarea class="form-input" name="comment" rows="5" maxlength="3000">${h(prior?.comment || '')}</textarea>`)}${button('Save feedback', 'type="submit"')}</form>`, async fd => mutate('judge-feedback', { roundId: round.id, roomId: btn.dataset.room, judgeId: btn.dataset.judge, rating: Number(fd.get('rating')), comment: fd.get('comment') })); return;
+        showDialog('Confidential judge feedback', `<form class="ps-stack"><p>Your evaluation goes to the tournament's administrators only. It is <strong>not anonymous</strong> to them: they can see your name with it. The judge you are evaluating cannot see it, and it never appears in results or public pages.</p>${field('Rating', select('rating', [[1, '1 — Needs improvement'], [2, '2'], [3, '3 — Satisfactory'], [4, '4'], [5, '5 — Excellent']], prior?.rating || 3))}${field('Comments', `<textarea class="form-input" name="comment" rows="5" maxlength="3000">${h(prior?.comment || '')}</textarea>`)}${button('Save feedback', 'type="submit"')}</form>`, async fd => mutate('judge-feedback', { roundId: round.id, roomId: btn.dataset.room, judgeId: btn.dataset.judge, rating: Number(fd.get('rating')), comment: fd.get('comment') })); return;
       }
       busy = true; btn.disabled = true;
       if (action === 'refresh') { await load(); render(); }

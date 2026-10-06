@@ -131,6 +131,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 - 2026-10-06 — Stage 1: ps-v2.sql fixed (it had never run: reserved word, missing commit, jsonb/text loops, ambiguous alias, no delete cleanup) and wired in; ballot revisions; idempotent retries; PGlite tests.
 - 2026-10-06 — Stage 2: configurable rules engine, live preview, capacity planner, penalties, structured feedback, ballot review screen; browser walkthrough + fake Supabase harness.
 - 2026-10-06 — Draw/pairing: researched NSDA/Tabroom/SpeechWire speech sectioning; built ps-draw.js + `propose-draw` API + draw dialog report; 9 draw tests.
+- 2026-10-06 — Judge walkthrough (`npm run ps:judge-e2e`, 28 checks on a phone viewport against the local demo): validation, drafts, reload, review, penalties, offline submit, lock, peer feedback privacy, speaker isolation. Added a "Next" card (judge: outstanding ballot; speaker: room and speaking position), own room first, honest non-anonymous wording for peer evaluations.
 - 2026-10-06 — Stage 3: hashed private links with session exchange, revoke/rotate, rate limits, share controls.
 
 ## In progress
