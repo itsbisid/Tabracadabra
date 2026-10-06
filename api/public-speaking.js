@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { collectBody, sendJson } from '../api-shared/portal-utils.js';
 import { canAdministerTournament, getSessionContext } from '../api-shared/deletion-utils.js';
 import { createEvent, mutateEvent, projectEvent, previewRules, planCapacity } from '../api-shared/ps-engine.js';
-import { issuePSLink, verifyPSLink, assertPSParticipant } from '../api-shared/ps-access.js';
-import { auditTrail, commitEvent, listEvents, loadEvent } from '../api-shared/ps-store.js';
+import { assertPSParticipant, hashToken, newToken, tokenKind, LINK_DAYS, SESSION_HOURS } from '../api-shared/ps-access.js';
+import { allowRequest, auditTrail, checkToken, commitEvent, issueToken, linkStatus, listEvents, loadEvent, revokeTokens } from '../api-shared/ps-store.js';
+
+const clientKey = request => String(request.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || request.socket?.remoteAddress || 'unknown';
 
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 function fail(message, status = 400) { throw Object.assign(new Error(message), { status }); }
@@ -26,10 +28,26 @@ export default async function handler(request, response) {
     const { action, input = {} } = payload;
     const requestKey = payload.requestKey == null ? null : (uuid(payload.requestKey) ? payload.requestKey : fail('Invalid request key.'));
     let row, actor;
-    if (payload.token) {
-      try { actor = verifyPSLink(payload.token, process.env.SUPABASE_SERVICE_ROLE_KEY); } catch (error) { fail(error.message, 401); }
-      row = await eventRow(actor.eventId, 401);
+    const credential = payload.session || payload.token;
+    if (credential) {
+      // Participant access: a private link (psl_) or the session it was exchanged for (pss_).
+      const kind = tokenKind(credential);
+      const grant = kind ? await checkToken(hashToken(credential)) : null;
+      if (!grant) {
+        if (!(await allowRequest(`bad-link:${clientKey(request)}`, 30, 600))) fail('Too many attempts. Wait a few minutes and try again.', 429);
+        fail('This private link is invalid, expired or has been replaced. Ask tab for a new link.', 401);
+      }
+      actor = { role: grant.role, id: grant.id, eventId: grant.eventId };
+      row = await eventRow(grant.eventId, 401);
       try { assertPSParticipant(row.state, actor); } catch (error) { fail(error.message, 403); }
+      if (action === 'redeem') {
+        if (kind !== 'portal') fail('Open your private link to start a session.', 400);
+        if (!(await allowRequest(`redeem:${clientKey(request)}`, 60, 600))) fail('Too many attempts. Wait a few minutes and try again.', 429);
+        const session = newToken('session');
+        const expiresAt = new Date(Math.min(Date.parse(grant.expiresAt), Date.now() + SESSION_HOURS * 3600000)).toISOString();
+        await issueToken({ eventId: grant.eventId, entryId: grant.id, hash: hashToken(session), purpose: 'session', expiresAt, parentHash: hashToken(credential) });
+        return sendJson(response, 200, { session, sessionExpiresAt: expiresAt, id: row.id, version: row.version, state: projectEvent(row.state, actor) });
+      }
     } else if (action === 'public') {
       row = await eventRow(payload.eventId);
       return sendJson(response, 200, { id: row.id, state: projectEvent(row.state) });
@@ -50,7 +68,21 @@ export default async function handler(request, response) {
       }
     }
     if (!row) fail('Choose a public speaking event.');
-    if (action === 'read') return sendJson(response, 200, { id: row.id, version: row.version, state: projectEvent(row.state, actor) });
+    if (action === 'read') return sendJson(response, 200, { id: row.id, version: row.version, state: projectEvent(row.state, actor), ...(actor.role === 'admin' ? { links: await linkStatus(row.id) } : {}) });
+    if (action === 'portal-link' || action === 'revoke-link') {
+      if (actor.role !== 'admin') fail('Only tournament administrators can manage private links.', 403);
+      if (!['speaker', 'judge'].includes(input.role)) fail('Invalid participant role.');
+      const person = (input.role === 'speaker' ? row.state.speakers : row.state.judges).find(p => p.id === input.personId);
+      if (!person) fail('Participant not found.', 404);
+      if (action === 'revoke-link') {
+        await revokeTokens(row.id, person.id, `admin:${actor.id}`, input.reason);
+        return sendJson(response, 200, { revoked: true, links: await linkStatus(row.id) });
+      }
+      if (!person.active) fail('Restore this participant before issuing a link.');
+      const token = newToken('portal'), expiresAt = new Date(Date.now() + LINK_DAYS * 86400000).toISOString();
+      await issueToken({ eventId: row.id, entryId: person.id, hash: hashToken(token), purpose: 'portal', expiresAt, actor: `admin:${actor.id}`, reason: input.reason });
+      return sendJson(response, 200, { token, expiresAt, links: await linkStatus(row.id) });
+    }
     if (action === 'plan') {
       if (actor.role !== 'admin') fail('Only tournament administrators can plan capacity.', 403);
       return sendJson(response, 200, { plan: planCapacity(row.state, input) });
@@ -67,12 +99,7 @@ export default async function handler(request, response) {
     }
     const state = mutateEvent(row.state, action, input, actor);
     const saved = await commitEvent(row, state, actor, action, { reason: input.reason, requestKey, request: payload });
-    let token;
-    if (action === 'portal-link') {
-      const person = (input.role === 'speaker' ? saved.state.speakers : saved.state.judges).find(p => p.id === input.personId);
-      token = issuePSLink(row.id, person, input.role, process.env.SUPABASE_SERVICE_ROLE_KEY);
-    }
-    return sendJson(response, 200, { id: saved.id, version: saved.version, state: projectEvent(saved.state, actor), ...(token ? { token } : {}) });
+    return sendJson(response, 200, { id: saved.id, version: saved.version, state: projectEvent(saved.state, actor), ...(actor.role === 'admin' ? { links: await linkStatus(row.id) } : {}) });
   } catch (error) {
     const status = error.status || 400;
     if (status >= 500) console.error(JSON.stringify({ route: 'public-speaking', error: error.message }));

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEvent, mutateEvent, scoreRow, standings, projectEvent, allocationWarnings } from '../api-shared/ps-engine.js';
-import { issuePSLink, verifyPSLink, assertPSParticipant } from '../api-shared/ps-access.js';
+import { assertPSParticipant, newToken, tokenKind, hashToken } from '../api-shared/ps-access.js';
 
 const admin = { role: 'admin', id: 'tab' };
 const mutate = (state, action, input = {}, actor = admin) => mutateEvent(state, action, input, actor);
@@ -127,18 +127,19 @@ test('rank aggregation averages panels and exact cutoff ties require a reason', 
   assert.deepEqual(state.rounds[1].speakerIds, [state.speakers[1].id]);
 });
 
-test('private links expire, reject tampering, rotate and revoke', () => {
+test('private link tokens are random, typed and withdrawn people lose access', () => {
   let state = fixture();
-  const personId = state.judges[0].id;
-  state = mutate(state, 'portal-link', { role: 'judge', personId });
-  const token = issuePSLink('event', state.judges[0], 'judge', 'test-secret', 100);
-  const actor = verifyPSLink(token, 'test-secret', 200);
-  assert.equal(assertPSParticipant(state, actor).id, personId);
-  assert.throws(() => verifyPSLink(token + 'x', 'test-secret', 200), /Invalid/);
-  assert.throws(() => verifyPSLink(token, 'different-secret', 200), /Invalid/);
-  assert.throws(() => verifyPSLink(token, 'test-secret', 15 * 86400000), /expired/);
-  state = mutate(state, 'portal-link', { role: 'judge', personId });
-  assert.throws(() => assertPSParticipant(state, actor), /revoked/);
+  const a = newToken('portal'), b = newToken('portal'), session = newToken('session');
+  assert.notEqual(a, b);
+  assert.equal(tokenKind(a), 'portal'); assert.equal(tokenKind(session), 'session');
+  for (const bad of [a + 'x', a.slice(0, -1), 'psl_short', null, 42, `psx_${a.slice(4)}`]) assert.equal(tokenKind(bad), null);
+  assert.equal(hashToken(a).length, 64); assert.notEqual(hashToken(a), hashToken(b)); assert.ok(!hashToken(a).includes(a));
+  const actor = { role: 'judge', id: state.judges[0].id };
+  assert.equal(assertPSParticipant(state, actor).id, actor.id);
+  assert.throws(() => assertPSParticipant(state, { role: 'speaker', id: actor.id }), /no longer active/);
+  state = mutate(state, 'add-judges', { people: [{ name: 'Spare judge' }] });
+  state = mutate(state, 'person-status', { role: 'judge', personId: state.judges[2].id, active: false });
+  assert.throws(() => assertPSParticipant(state, { role: 'judge', id: state.judges[2].id }), /no longer active/);
 });
 
 test('failed mutations never alter the original state', () => {

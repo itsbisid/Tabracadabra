@@ -36,3 +36,10 @@ export function commitEvent(row, state, actor, action, { reason = '', requestKey
     p_request_key: requestKey, p_payload_hash: requestKey ? payloadHash(request) : ''
   });
 }
+
+export const issueToken = ({ eventId, entryId, hash, purpose, expiresAt, parentHash = null, actor = 'system', reason = '' }) =>
+  rpc('ps_v2_issue_token', { p_event_id: eventId, p_entry_id: entryId, p_hash: hash, p_purpose: purpose, p_expires_at: expiresAt, p_parent_hash: parentHash, p_actor: actor, p_reason: reason });
+export const checkToken = hash => rpc('ps_v2_check_token', { p_hash: hash });
+export const revokeTokens = (eventId, entryId, actor, reason) => rpc('ps_v2_revoke_tokens', { p_event_id: eventId, p_entry_id: entryId, p_actor: actor, p_reason: reason || '' });
+export const linkStatus = eventId => rpc('ps_v2_link_status', { p_event_id: eventId });
+export const allowRequest = (key, limit, windowSeconds) => rpc('ps_v2_rate', { p_key: key, p_limit: limit, p_window_seconds: windowSeconds });

@@ -51,23 +51,49 @@ test('API enforces admin auth, isolates portals, and rejects stale writes', asyn
   assert.equal(stale.status, 409);
   row = await load(id);
   assert.equal(row.state.speakers.length, 1);
-  result = await call({ action: 'portal-link', eventId: id, version: row.version, input: { role: 'speaker', personId: row.state.speakers[0].id } });
+  const amaId = row.state.speakers[0].id;
+  result = await call({ action: 'portal-link', eventId: id, input: { role: 'speaker', personId: amaId } });
   const token = result.body.token;
-  assert.ok(token);
-  assert.equal((await call({ action: 'read', token }, null)).body.state.participant.name, 'Ama');
-  assert.equal((await call({ action: 'settings', token, version: result.body.version, input: { name: 'Attack' } }, null)).status, 400);
+  assert.match(token, /^psl_/);
+  assert.ok(result.body.links[amaId], 'admin sees the link is active');
+  // Only the hash is stored.
+  const stored = await db.query('select token_hash from ps_access_tokens');
+  assert.ok(!JSON.stringify(stored.rows).includes(token));
+  assert.equal((await call({ action: 'portal-link', eventId: id, input: { role: 'speaker', personId: amaId } }, 'outsider-token')).status, 403);
+  // Exchange the link for a session, as the portal does.
+  const redeemed = await call({ action: 'redeem', token }, null);
+  assert.equal(redeemed.status, 200); assert.match(redeemed.body.session, /^pss_/);
+  const session = redeemed.body.session;
+  assert.equal((await call({ action: 'read', session }, null)).body.state.participant.name, 'Ama');
+  assert.equal((await call({ action: 'redeem', session }, null)).status, 400, 'a session cannot mint sessions');
+  assert.equal((await call({ action: 'settings', session, version: redeemed.body.version, input: { name: 'Attack' } }, null)).status, 400);
+  assert.equal((await call({ action: 'plan', session }, null)).status, 403);
   const publicView = await call({ action: 'public', eventId: id }, null);
   assert.equal(publicView.status, 200); assert.deepEqual(publicView.body.state.speakers, []);
-  assert.ok(!JSON.stringify(publicView).includes('accessVersion'));
-  result = await call({ action: 'check-in', token, version: result.body.version }, null);
+  result = await call({ action: 'check-in', session, version: redeemed.body.version }, null);
   assert.equal(result.status, 200); assert.equal(result.body.state.participant.checkedIn, true);
-  row = await load(id);
-  await call({ action: 'portal-link', eventId: id, version: row.version, input: { role: 'speaker', personId: row.state.speakers[0].id } });
-  assert.equal((await call({ action: 'read', token }, null)).status, 403);
+  // Tampered and unknown tokens are refused.
+  assert.equal((await call({ action: 'read', token: token.slice(0, -1) + (token.endsWith('A') ? 'B' : 'A') }, null)).status, 401);
+  assert.equal((await call({ action: 'read', token: 'psl_' + 'x'.repeat(43) }, null)).status, 401);
+  // Issuing a new link replaces the old link and ends its sessions.
+  const replacement = (await call({ action: 'portal-link', eventId: id, input: { role: 'speaker', personId: amaId } })).body.token;
+  assert.equal((await call({ action: 'read', token }, null)).status, 401);
+  assert.equal((await call({ action: 'read', session }, null)).status, 401);
+  assert.equal((await call({ action: 'read', token: replacement }, null)).status, 200);
+  await call({ action: 'revoke-link', eventId: id, input: { role: 'speaker', personId: amaId, reason: 'Lost phone' } });
+  assert.equal((await call({ action: 'read', token: replacement }, null)).status, 401);
+  // Expired links stop working.
+  const expiring = (await call({ action: 'portal-link', eventId: id, input: { role: 'speaker', personId: amaId } })).body.token;
+  await db.query(`update ps_access_tokens set expires_at = now() - interval '1 second' where revoked_at is null`);
+  assert.equal((await call({ action: 'read', token: expiring }, null)).status, 401);
+  // Repeated bad guesses are rate limited.
+  let limited = 0;
+  for (let i = 0; i < 32; i++) if ((await call({ action: 'read', token: 'psl_' + String(i).padStart(43, 'y') }, null)).status === 429) limited++;
+  assert.ok(limited >= 1);
   assert.equal((await load(id)).state.name, 'Prepared');
   const audit = await call({ action: 'audit', eventId: id });
   assert.ok(audit.body.audit.length >= 4);
-  assert.equal((await call({ action: 'audit', token }, null)).status, 403);
+  assert.ok(audit.body.audit.some(a => a.action === 'revoke-link') && audit.body.audit.some(a => a.action === 'issue-link'));
   // Retrying the same request (double click / dropped connection) is applied once.
   row = await load(id);
   const retry = { action: 'add-speakers', eventId: id, version: row.version, requestKey: '0d6c1f6e-6a40-4c69-9d2e-3b1f6a2c7e11', input: { people: [{ name: 'Retried once' }] } };

@@ -307,4 +307,71 @@ revoke all on function public.ps_v2_list(text) from public, anon, authenticated;
 grant execute on function public.ps_v2_list(text) to service_role;
 revoke all on function public.ps_v2_audit(uuid) from public, anon, authenticated;
 grant execute on function public.ps_v2_audit(uuid) to service_role;
+
+-- Private participant links: only SHA-256 hashes are stored. A 'portal' token is the shareable
+-- link; redeeming it issues a short 'session' token whose parent is the link. Revoking a link
+-- also ends its sessions.
+alter table public.ps_access_tokens add column if not exists last_used_at timestamptz;
+create or replace function public.ps_v2_issue_token(p_event_id uuid, p_entry_id uuid, p_hash text, p_purpose text, p_expires_at timestamptz, p_parent_hash text default null, p_actor text default 'system', p_reason text default '')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v integer;
+begin
+  if p_purpose = 'portal' then
+    update ps_access_tokens set revoked_at = now() where event_id = p_event_id and entry_id = p_entry_id and purpose = 'portal' and revoked_at is null;
+    select version into v from ps_competitions where id = p_event_id;
+    insert into ps_audit_events(event_id, actor, action, reason, version, details)
+      values(p_event_id, p_actor, 'issue-link', left(p_reason, 1000), coalesce(v, 0), jsonb_build_object('entryId', p_entry_id, 'expiresAt', p_expires_at));
+  end if;
+  insert into ps_access_tokens(token_hash, event_id, entry_id, purpose, expires_at, parent_hash)
+    values(p_hash, p_event_id, p_entry_id, p_purpose, p_expires_at, p_parent_hash);
+  return jsonb_build_object('expiresAt', p_expires_at);
+end $$;
+create or replace function public.ps_v2_check_token(p_hash text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare t ps_access_tokens; parent ps_access_tokens; e ps_entries;
+begin
+  select * into t from ps_access_tokens where token_hash = p_hash;
+  if not found or t.revoked_at is not null or t.expires_at <= now() then return null; end if;
+  if t.parent_hash is not null then
+    select * into parent from ps_access_tokens where token_hash = t.parent_hash;
+    if not found or parent.revoked_at is not null or parent.expires_at <= now() then return null; end if;
+  end if;
+  select * into e from ps_entries where event_id = t.event_id and id = t.entry_id;
+  if not found then return null; end if;
+  update ps_access_tokens set last_used_at = now() where token_hash = p_hash;
+  return jsonb_build_object('eventId', t.event_id, 'id', t.entry_id, 'role', e.role, 'purpose', t.purpose, 'expiresAt', t.expires_at);
+end $$;
+create or replace function public.ps_v2_revoke_tokens(p_event_id uuid, p_entry_id uuid, p_actor text, p_reason text default '') returns integer
+language plpgsql security definer set search_path = public as $$
+declare n integer; v integer;
+begin
+  update ps_access_tokens set revoked_at = now() where event_id = p_event_id and entry_id = p_entry_id and revoked_at is null;
+  get diagnostics n = row_count;
+  select version into v from ps_competitions where id = p_event_id;
+  insert into ps_audit_events(event_id, actor, action, reason, version, details)
+    values(p_event_id, p_actor, 'revoke-link', left(p_reason, 1000), coalesce(v, 0), jsonb_build_object('entryId', p_entry_id, 'revoked', n));
+  return n;
+end $$;
+create or replace function public.ps_v2_link_status(p_event_id uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_object_agg(entry_id, jsonb_build_object('expiresAt', expires_at, 'lastUsedAt', last_used_at, 'createdAt', created_at)), '{}')
+  from (select distinct on (entry_id) entry_id, expires_at, last_used_at, created_at from ps_access_tokens
+        where event_id = p_event_id and purpose = 'portal' and revoked_at is null and expires_at > now() order by entry_id, created_at desc) t;
+$$;
+-- Fixed-window rate limit. Returns false once p_limit attempts are used in the current window.
+create or replace function public.ps_v2_rate(p_key text, p_limit integer, p_window_seconds integer) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare w timestamptz := to_timestamp(floor(extract(epoch from now()) / p_window_seconds) * p_window_seconds); n integer;
+begin
+  insert into ps_rate_buckets(key, window_start, attempts) values(left(p_key, 200), w, 1)
+    on conflict(key, window_start) do update set attempts = ps_rate_buckets.attempts + 1 returning attempts into n;
+  delete from ps_rate_buckets where window_start < now() - interval '1 day';
+  return n <= p_limit;
+end $$;
+do $$ declare f text; begin
+  foreach f in array array['ps_v2_issue_token(uuid,uuid,text,text,timestamptz,text,text,text)','ps_v2_check_token(text)','ps_v2_revoke_tokens(uuid,uuid,text,text)','ps_v2_link_status(uuid)','ps_v2_rate(text,integer,integer)'] loop
+    execute format('revoke all on function public.%s from public, anon, authenticated', f);
+    execute format('grant execute on function public.%s to service_role', f);
+  end loop;
+end $$;
 commit;

@@ -1,10 +1,33 @@
 import { psRequest } from '../lib/ps-service.js';
 import { ballotView, h, button, field, select, card, empty, table, nameOf, standingsTable, showDialog, ballotDialog } from '../components/ps-ui.js';
 
-export async function renderPSPortal(container, token, eventId = null) {
-  let current, busy = false;
-  const request = (action, input = {}) => psRequest({ action, input, ...(token ? { token } : { eventId }), version: current?.version }, false);
-  const load = async () => { current = await request(token ? 'read' : 'public'); };
+// The private link is exchanged for a short session kept in this tab only, and the link is
+// removed from the address bar so it does not linger in history or screenshots.
+const SESSION_KEY = 'tabracadabra-ps-session';
+const savedSession = () => { try { return sessionStorage.getItem(SESSION_KEY); } catch { return null; } };
+const saveSession = value => { try { value ? sessionStorage.setItem(SESSION_KEY, value) : sessionStorage.removeItem(SESSION_KEY); } catch { /* private mode */ } };
+
+export async function renderPSPortal(container, linkToken, eventId = null) {
+  let current, busy = false, session = null;
+  const participant = linkToken !== null && !eventId;
+  if (participant) {
+    try {
+      if (linkToken) {
+        const redeemed = await psRequest({ action: 'redeem', token: linkToken }, false);
+        session = redeemed.session; saveSession(session);
+        history.replaceState(null, '', `${location.pathname}${location.search}#/ps/portal`);
+      } else session = savedSession();
+      if (!session) throw new Error('Open your private link again to continue. For your security, sessions end when you close this tab.');
+    } catch (error) {
+      container.innerHTML = `<main class="ps ps-portal"><section class="card ps-card"><h1>Private portal</h1><p class="ps-error" role="alert">${h(error.message)}</p><p class="ps-help">If your link has expired or was replaced, ask the tab team for a new one.</p></section></main>`;
+      return;
+    }
+  }
+  const request = (action, input = {}) => psRequest({ action, input, ...(participant ? { session } : { eventId }), version: current?.version }, false);
+  const load = async () => {
+    try { current = await request(participant ? 'read' : 'public'); }
+    catch (error) { if (participant && error.status === 401) saveSession(null); throw error; }
+  };
   const mutate = async (action, data) => {
     try { current = await request(action, data); render(); }
     catch (error) {
@@ -15,7 +38,7 @@ export async function renderPSPortal(container, token, eventId = null) {
 
   function render() {
     const event = current.state, person = event.participant;
-    container.innerHTML = `<main class="ps ps-portal"><header class="ps-top"><div><span class="ps-eyebrow">TABRACADABRA · PUBLIC SPEAKING</span><h1>${h(event.name)}</h1><p>${person ? `Welcome, ${h(person.name)} · ${h(person.role)}` : 'Published draws and results'}</p></div>${button('Refresh', 'data-action="refresh"', true)}</header><p class="ps-error" id="ps-portal-error" role="alert" hidden></p>
+    container.innerHTML = `<main class="ps ps-portal"><header class="ps-top"><div><span class="ps-eyebrow">TABRACADABRA · PUBLIC SPEAKING</span><h1>${h(event.name)}</h1><p>${person ? `Welcome, ${h(person.name)} · ${h(person.role)}` : 'Published draws and results'}</p></div><div class="ps-actions">${button('Refresh', 'data-action="refresh"', true)}${participant ? button('Leave portal', 'data-action="leave"', true) : ''}</div></header>${participant ? '<p class="ps-help">This is your private portal. Anyone who has your link can open it, so do not share or post it.</p>' : ''}<p class="ps-error" id="ps-portal-error" role="alert" hidden></p>
       ${person?.role === 'speaker' ? card('Your event', `<p>${h(event.type)} · Speech length: ${event.durationSeconds} seconds${event.penalty?.method === 'overtime' ? ' · overtime penalties apply' : ''}</p>${person.checkedIn ? '<strong>✓ You are checked in</strong>' : button('Check in', 'data-action="check-in"')}<p class="ps-help">Find your room below. Scores and feedback appear when released by tab.</p>`) : ''}
       ${person?.role === 'judge' ? card('Your judging tasks', `<p>Open your assigned ballot below. Score every criterion and rank each speaker, then submit. Tab will approve the ballot.</p>${table(['Criterion', 'Maximum', 'Weight'], event.rubric.map(c => [h(c.name), c.max, `${c.weight}%`]))}`) : ''}
       ${event.rounds.length ? event.rounds.map(round => card(round.name, `<div class="ps-actions"><span class="badge">${h(round.stage)} · ${h(round.status)}</span></div>${round.rooms.map(room => {
@@ -47,6 +70,7 @@ export async function renderPSPortal(container, token, eventId = null) {
       }
       busy = true; btn.disabled = true;
       if (action === 'refresh') { await load(); render(); }
+      if (action === 'leave') { saveSession(null); container.innerHTML = '<main class="ps ps-portal"><section class="card ps-card"><h1>You have left the portal</h1><p>Open your private link again whenever you need it.</p></section></main>'; return; }
       else if (action === 'check-in') await mutate('check-in', {});
     } catch (error) { const el = container.querySelector('#ps-portal-error'); el.textContent = error.message; el.hidden = false; }
     finally { busy = false; btn.disabled = false; }

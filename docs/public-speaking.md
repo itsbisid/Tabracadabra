@@ -29,7 +29,7 @@ This change does not automatically run production SQL, merge a branch, deploy a 
 - Panel-averaged scores and ranks, cumulative preliminary standings, round standings, category-filtered final breaks and explicit resolution of exact cutoff ties.
 - Separate results/feedback release controls. Public event link shows published draws/results. Private speaker links show only that speaker's released written feedback and criterion scores.
 - Speakers can evaluate their assigned judges; judges can evaluate other judges in their room. Evaluations are confidential to tournament admins.
-- Private links expire after 14 days. Generating a replacement immediately revokes the previous link. Withdrawn participants cannot use their links.
+- Private links expire after 14 days and are stored only as hashes. Generating a replacement or revoking immediately ends the previous link and its sessions. Withdrawn participants cannot use their links.
 - CSV standings and speaker exports; print styling for draws/results; recent change history.
 
 ## Scoring rules
@@ -50,7 +50,7 @@ PS data lives in normalised tables (`supabase/ps-v2.sql`): competitions, rule se
 
 The engine (`api-shared/ps-engine.js`) works on a loaded event and the `ps_v2_commit` function writes the result in one transaction: it locks the event, checks its version (stale writes get HTTP 409), records an audit event, keeps the previous version of any changed ballot in `ps_ballot_revisions`, and stores a request receipt. Clients may send a `requestKey` (UUID); retrying the same request returns the saved result instead of applying it twice, and reusing a key for a different request is refused.
 
-All tables have RLS enabled and no grants for `anon`/`authenticated`; only the service role (the API) can call the `ps_v2_*` functions. Deleting a tournament deletes its PS data. Participant tokens are purpose-specific HMAC tokens, distinct from BP links. Public/participant responses are explicit projections, never the raw event.
+All tables have RLS enabled and no grants for `anon`/`authenticated`; only the service role (the API) can call the `ps_v2_*` functions. Deleting a tournament deletes its PS data. Private participant links are 256-bit random tokens (`psl_…`); only their SHA-256 hashes are stored in `ps_access_tokens`. The portal exchanges the link (by POST, never on page load by a server, so email/link scanners cannot use it up) for a 12-hour session token (`pss_…`) kept in that browser tab only, and removes the link from the address bar. Issuing a new link replaces the old one; revoking a link, or withdrawing the participant, ends its sessions immediately on the server. Failed link attempts and link redemptions are rate limited per client. Link issue/revoke is recorded in the audit history, and the admin roster shows whether each person's link is active and has been used. Links are never stored, so tab copies or shares them (copy, copy message, WhatsApp) at the moment they are created. Public/participant responses are explicit projections, never the raw event.
 
 `tests/ps-db.test.js` runs the migrations in PGlite and checks that every mutation of a full tournament round-trips exactly, plus idempotent retries, stale-write rejection, tournament scoping, browser-role denial, deletion cleanup and v1→v2 migration. `tests/public-speaking-api.test.js` exercises the API against the same database.
 

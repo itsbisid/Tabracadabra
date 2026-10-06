@@ -85,8 +85,8 @@ async function router() {
   app.onclick = null;
   document.getElementById('ps-dialog')?.remove();
 
-  if (routePath.startsWith('/ps/portal/')) {
-    await renderPSPortal(app, routePath.slice('/ps/portal/'.length));
+  if (routePath === '/ps/portal' || routePath.startsWith('/ps/portal/')) {
+    await renderPSPortal(app, routePath.slice('/ps/portal/'.length) || '');
     return;
   }
   if (routePath.startsWith('/ps/live/')) {

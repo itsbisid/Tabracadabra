@@ -10,7 +10,7 @@ const admin = { role: 'admin', id: 'tab' };
 
 // The parts of state that must survive storage exactly.
 function canonical(s) {
-  const person = p => ({ id: p.id, name: p.name, institution: p.institution, category: p.category, active: p.active, checkedIn: p.checkedIn, accessVersion: p.accessVersion });
+  const person = p => ({ id: p.id, name: p.name, institution: p.institution, category: p.category, active: p.active, checkedIn: p.checkedIn });
   return {
     name: s.name, type: s.type, rubric: s.rubric, scoring: s.scoring, durationSeconds: s.durationSeconds,
     speakers: s.speakers.map(person), judges: s.judges.map(person),
@@ -48,8 +48,6 @@ test('v2 storage round-trips a full tournament, one mutation at a time', async (
   s = await h.step('add-speakers', { people: [{ name: 'Test Speaker A', institution: 'Inst 1', category: 'Novice' }, { name: 'Test Speaker B', institution: 'Inst 2' }, { name: 'Test Speaker C', institution: 'Inst 3' }] });
   s = await h.step('add-judges', { people: [{ name: 'Test Judge 1', institution: 'Inst 9' }, { name: 'Test Judge 2', institution: 'Inst 8' }] });
   assert.deepEqual(s.speakers.map(p => p.name), ['Test Speaker A', 'Test Speaker B', 'Test Speaker C'], 'registration order is preserved');
-  s = await h.step('portal-link', { role: 'speaker', personId: s.speakers[0].id });
-  assert.equal(s.speakers[0].accessVersion, 1);
   s = await h.step('create-round', { name: 'Round 1', speakerIds: s.speakers.map(p => p.id) });
   const roundId = s.rounds[0].id;
   s = await h.step('save-draw', { roundId, rooms: [{ name: 'Room 1', speakers: s.speakers.map(p => p.id), judges: s.judges.map(p => p.id) }] });
@@ -73,13 +71,13 @@ test('v2 storage round-trips a full tournament, one mutation at a time', async (
   assert.equal(table[0].speakerId, room.speakers[0]);
   s = await h.step('create-break', { name: 'Final', breakSize: 2 });
   assert.equal(s.rounds[1].stage, 'final');
-  assert.equal(h.row.version, 18);
+  assert.equal(h.row.version, 17);
 
   // Ballot history is kept as revisions, and every commit is audited.
   const revisions = await h.db.query('select count(*)::int as n from ps_ballot_revisions where event_id=$1', [h.eventId]);
   assert.ok(revisions.rows[0].n >= 4);
   const audits = await h.db.query('select count(*)::int as n from ps_audit_events where event_id=$1', [h.eventId]);
-  assert.equal(audits.rows[0].n, 18);
+  assert.equal(audits.rows[0].n, 17);
 });
 
 test('stale versions are rejected and request keys make retries idempotent', async () => {

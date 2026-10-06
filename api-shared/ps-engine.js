@@ -175,17 +175,13 @@ export function mutateEvent(original, action, input, actor) {
     for (const p of input.people) {
       const name = required(p.name), institution = text(p.institution);
       assert(!list.some(s => s.name.toLowerCase() === name.toLowerCase() && s.institution.toLowerCase() === institution.toLowerCase()), `Already registered: ${name} (${institution || 'no institution'}).`);
-      list.push({ id: randomUUID(), name, institution, category: text(p.category), active: true, checkedIn: false, accessVersion: 0 });
+      list.push({ id: randomUUID(), name, institution, category: text(p.category), active: true, checkedIn: false });
     }
   } else if (action === 'person-status') {
     assert(['speaker', 'judge'].includes(input.role), 'Invalid participant role.');
     const p = find(input.role === 'speaker' ? event.speakers : event.judges, input.personId, 'Participant');
     assert(!event.rounds.some(r => r.status !== 'completed' && r.rooms.some(room => (input.role === 'speaker' ? room.speakers : room.judges).includes(p.id))), 'Remove this participant from unfinished draws before withdrawing them.');
     p.active = Boolean(input.active);
-  } else if (action === 'portal-link') {
-    assert(['speaker', 'judge'].includes(input.role), 'Invalid participant role.');
-    const p = find(input.role === 'speaker' ? event.speakers : event.judges, input.personId, 'Participant');
-    p.accessVersion++;
   } else if (action === 'check-in') {
     assert(actor.role === 'speaker', 'Only speakers can check in here.');
     find(event.speakers, actor.id, 'Speaker').checkedIn = true;
