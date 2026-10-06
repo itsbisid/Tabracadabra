@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import handler from '../api/public-speaking.js';
+import { createPSDatabase, callRpc } from './helpers/ps-db.js';
 
 const tournamentId = '4a16320d-5ccc-4e53-aaca-b9033af9371c';
 const owner = { id: 'owner' };
@@ -18,25 +19,20 @@ async function call(body, token = 'owner-token', method = 'POST') {
 
 test('API enforces admin auth, isolates portals, and rejects stale writes', async t => {
   const originalFetch = global.fetch;
-  const records = new Map();
-  const audits = [];
+  const { db } = await createPSDatabase({ tournamentId });
+  const calls = [];
+  const load = async id => (await callRpc(db, 'ps_v2_load', { p_event_id: id }))[0];
   global.fetch = async (url, options = {}) => {
     const u = new URL(url);
     const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
     if (u.pathname.endsWith('/auth/v1/user')) return options.headers.Authorization === 'Bearer owner-token' ? reply(owner) : options.headers.Authorization === 'Bearer outsider-token' ? reply({ id: 'outsider' }) : reply({}, 401);
     if (u.pathname.endsWith('/tournaments')) return reply([{ owner_id: owner.id }]);
     if (u.pathname.endsWith('/tournament_memberships')) return reply([]);
-    if (u.pathname.endsWith('/ps_events')) {
-      if (u.searchParams.has('id')) return reply([...records.values()].filter(r => `eq.${r.id}` === u.searchParams.get('id')));
-      return reply([...records.values()]);
-    }
-    if (u.pathname.endsWith('/ps_audit')) return reply(audits);
-    if (u.pathname.endsWith('/rpc/ps_commit')) {
+    const rpc = u.pathname.match(/\/rpc\/(ps_v2_[a-z_]+)$/);
+    if (rpc) {
       assert.equal(options.headers.Authorization, 'Bearer service-test');
-      const p = JSON.parse(options.body); const old = records.get(p.p_event_id);
-      if (old && old.version !== p.p_version) return reply({ code: '40001', message: 'Conflict' }, 409);
-      const row = { id: p.p_event_id, tournament_id: p.p_tournament_id, version: p.p_version + 1, state: p.p_state };
-      records.set(row.id, row); audits.push({ action: p.p_action, version: row.version }); return reply(row);
+      calls.push(rpc[1]);
+      return reply(...await callRpc(db, rpc[1], JSON.parse(options.body)));
     }
     throw new Error(`Unexpected fetch ${url}`);
   };
@@ -47,13 +43,13 @@ test('API enforces admin auth, isolates portals, and rejects stale writes', asyn
   const created = await call({ action: 'create', tournamentId, input: { name: 'Prepared' } });
   assert.equal(created.status, 200);
   const id = created.body.id;
-  let row = records.get(id);
+  let row = await load(id);
   assert.equal((await call({ action: 'read', eventId: id }, 'outsider-token')).status, 403);
   let result = await call({ action: 'add-speakers', eventId: id, version: row.version, input: { people: [{ name: 'Ama' }] } });
   assert.equal(result.status, 200);
   const stale = await call({ action: 'add-speakers', eventId: id, version: row.version, input: { people: [{ name: 'Must not persist' }] } });
   assert.equal(stale.status, 409);
-  row = records.get(id);
+  row = await load(id);
   assert.equal(row.state.speakers.length, 1);
   result = await call({ action: 'portal-link', eventId: id, version: row.version, input: { role: 'speaker', personId: row.state.speakers[0].id } });
   const token = result.body.token;
@@ -65,9 +61,20 @@ test('API enforces admin auth, isolates portals, and rejects stale writes', asyn
   assert.ok(!JSON.stringify(publicView).includes('accessVersion'));
   result = await call({ action: 'check-in', token, version: result.body.version }, null);
   assert.equal(result.status, 200); assert.equal(result.body.state.participant.checkedIn, true);
-  row = records.get(id);
+  row = await load(id);
   await call({ action: 'portal-link', eventId: id, version: row.version, input: { role: 'speaker', personId: row.state.speakers[0].id } });
   assert.equal((await call({ action: 'read', token }, null)).status, 403);
-  assert.equal(records.get(id).state.name, 'Prepared');
-  assert.ok(audits.length >= 4);
+  assert.equal((await load(id)).state.name, 'Prepared');
+  const audit = await call({ action: 'audit', eventId: id });
+  assert.ok(audit.body.audit.length >= 4);
+  assert.equal((await call({ action: 'audit', token }, null)).status, 403);
+  // Retrying the same request (double click / dropped connection) is applied once.
+  row = await load(id);
+  const retry = { action: 'add-speakers', eventId: id, version: row.version, requestKey: '0d6c1f6e-6a40-4c69-9d2e-3b1f6a2c7e11', input: { people: [{ name: 'Retried once' }] } };
+  assert.equal((await call(retry)).status, 200);
+  const second = await call(retry);
+  assert.equal(second.status, 200); assert.equal(second.body.replayed, true);
+  assert.equal((await load(id)).state.speakers.filter(p => p.name === 'Retried once').length, 1);
+  const listed = await call({ action: 'list', tournamentId });
+  assert.equal(listed.body.events[0].speakers, 2);
 });

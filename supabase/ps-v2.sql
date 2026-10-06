@@ -22,6 +22,7 @@ create table if not exists public.ps_entries (
  user_id uuid, metadata jsonb not null default '{}', created_at timestamptz not null default now(),
  primary key(event_id,id)
 );
+alter table public.ps_entries add column if not exists sort_order integer not null default 0;
 create table if not exists public.ps_round_records (
  event_id uuid not null references public.ps_competitions(id) on delete cascade, id uuid not null,
  sequence integer not null, name text not null, stage text not null, status text not null,
@@ -133,7 +134,7 @@ create table if not exists public.ps_registration_submissions (
  unique(event_id,request_key), foreign key(event_id,role,form_version) references public.ps_registration_forms(event_id,role,version),
  foreign key(event_id,entry_id) references public.ps_entries(event_id,id)
 );
-create table if not exists public.ps_rate_buckets (key text not null, window timestamptz not null, attempts integer not null, primary key(key,window));
+create table if not exists public.ps_rate_buckets (key text not null, window_start timestamptz not null, attempts integer not null, primary key(key,window_start));
 create table if not exists public.ps_conflicts (
  event_id uuid not null, judge_id uuid not null, entry_id uuid not null, prohibited boolean not null default true,
  reason text not null, primary key(event_id,judge_id,entry_id),
@@ -168,7 +169,7 @@ create or replace function public.ps_v2_load(p_event_id uuid) returns jsonb lang
 declare e ps_competitions; result jsonb; rounds jsonb; people jsonb;
 begin
  select * into e from ps_competitions where id=p_event_id; if not found then return null; end if;
- select coalesce(jsonb_agg(jsonb_build_object('id',id,'name',name,'institution',institution,'category',category,'email',email,'active',active,'status',status,'checkedIn',checked_in,'role',role,'userId',user_id,'metadata',metadata) order by created_at,id),'[]') into people from ps_entries where event_id=e.id;
+ select coalesce(jsonb_agg(metadata || jsonb_build_object('id',id,'name',name,'institution',institution,'category',category,'email',email,'active',active,'status',status,'checkedIn',checked_in,'role',role,'userId',user_id) order by sort_order,created_at,id),'[]') into people from ps_entries where event_id=e.id;
  select coalesce(jsonb_agg(r.metadata || jsonb_build_object('id',r.id,'name',r.name,'stage',r.stage,'status',r.status,'ruleVersion',r.rule_version,'assignmentVersion',r.assignment_version,'needsReview',r.needs_review,
  'drawPublished',r.draw_published,'resultsPublished',r.results_published,'feedbackPublished',r.feedback_published,
  'speakerIds',(select coalesce(jsonb_agg(entry_id),'[]') from ps_round_entries where event_id=e.id and round_id=r.id),
@@ -203,32 +204,33 @@ begin
  values(p_event_id,p_tournament_id,p_state->>'name',p_state->>'type',new_version,rule_version,p_state-'speakers'-'judges'-'rounds'-'name'-'type')
  on conflict(id) do update set name=excluded.name,discipline=excluded.discipline,version=excluded.version,rule_version=excluded.rule_version,settings=excluded.settings,updated_at=now();
  insert into ps_rule_sets(event_id,version,configuration) values(p_event_id,rule_version,p_state-'speakers'-'judges'-'rounds') on conflict do nothing;
- for item in select value from jsonb_array_elements((p_state->'speakers')||(p_state->'judges')) loop
- insert into ps_entries(event_id,id,role,name,institution,category,email,status,active,checked_in,user_id,metadata)
- values(p_event_id,(item->>'id')::uuid,case when p_state->'speakers' @> jsonb_build_array(jsonb_build_object('id',item->>'id')) then 'speaker' else 'judge' end,item->>'name',coalesce(item->>'institution',''),coalesce(item->>'category',''),coalesce(item->>'email',''),coalesce(item->>'status','accepted'),coalesce((item->>'active')::boolean,true),coalesce((item->>'checkedIn')::boolean,false),(item->>'userId')::uuid,coalesce(item->'metadata','{}'))
- on conflict(event_id,id) do update set name=excluded.name,institution=excluded.institution,category=excluded.category,email=excluded.email,status=excluded.status,active=excluded.active,checked_in=excluded.checked_in,metadata=excluded.metadata;
+ for item,pos in select value,ordinality from jsonb_array_elements((p_state->'speakers')||(p_state->'judges')) with ordinality loop
+ insert into ps_entries(event_id,id,role,name,institution,category,email,status,active,checked_in,user_id,metadata,sort_order)
+ values(p_event_id,(item->>'id')::uuid,case when p_state->'speakers' @> jsonb_build_array(jsonb_build_object('id',item->>'id')) then 'speaker' else 'judge' end,item->>'name',coalesce(item->>'institution',''),coalesce(item->>'category',''),coalesce(item->>'email',''),coalesce(item->>'status','accepted'),coalesce((item->>'active')::boolean,true),coalesce((item->>'checkedIn')::boolean,false),(item->>'userId')::uuid,
+  item-'id'-'name'-'institution'-'category'-'email'-'status'-'active'-'checkedIn'-'role'-'userId'-'metadata',pos)
+ on conflict(event_id,id) do update set name=excluded.name,institution=excluded.institution,category=excluded.category,email=excluded.email,status=excluded.status,active=excluded.active,checked_in=excluded.checked_in,user_id=excluded.user_id,metadata=excluded.metadata,sort_order=excluded.sort_order;
  end loop;
  for r in select value from jsonb_array_elements(p_state->'rounds') loop
  seq=seq+1;
  insert into ps_round_records(event_id,id,sequence,name,stage,status,rule_version,assignment_version,draw_published,results_published,feedback_published,needs_review,metadata)
  values(p_event_id,(r->>'id')::uuid,seq,r->>'name',r->>'stage',r->>'status',coalesce((r->>'ruleVersion')::integer,rule_version),coalesce((r->>'assignmentVersion')::integer,1),coalesce((r->>'drawPublished')::boolean,false),coalesce((r->>'resultsPublished')::boolean,false),coalesce((r->>'feedbackPublished')::boolean,false),coalesce((r->>'needsReview')::boolean,false),r-'id'-'name'-'stage'-'status'-'rooms'-'ballots'-'judgeFeedback'-'speakerIds')
  on conflict(event_id,id) do update set status=excluded.status,assignment_version=excluded.assignment_version,draw_published=excluded.draw_published,results_published=excluded.results_published,feedback_published=excluded.feedback_published,needs_review=excluded.needs_review,metadata=excluded.metadata;
- for item in select value from jsonb_array_elements_text(r->'speakerIds') loop
+ for item in select value from jsonb_array_elements(r->'speakerIds') loop
  insert into ps_round_entries values(p_event_id,(r->>'id')::uuid,(item#>>'{}')::uuid) on conflict do nothing; end loop;
  -- Only unscored draft assignments can be replaced. Published/balloted heats retain identity.
  if r->>'status'='draft' and not exists(select 1 from ps_ballot_records where event_id=p_event_id and round_id=(r->>'id')::uuid) then delete from ps_heats where event_id=p_event_id and round_id=(r->>'id')::uuid; end if;
  for h in select value from jsonb_array_elements(r->'rooms') loop
  insert into ps_heats(event_id,id,round_id,name,room_id,wave,starts_at,ends_at,locked) values(p_event_id,(h->>'id')::uuid,(r->>'id')::uuid,h->>'name',(h->>'roomId')::uuid,coalesce((h->>'wave')::integer,1),(h->>'startsAt')::timestamptz,(h->>'endsAt')::timestamptz,coalesce((h->>'locked')::boolean,false))
  on conflict(event_id,id) do update set name=excluded.name,room_id=excluded.room_id,wave=excluded.wave,starts_at=excluded.starts_at,ends_at=excluded.ends_at,locked=excluded.locked;
- pos=0;for item in select value from jsonb_array_elements_text(h->'speakers') loop
+ pos=0;for item in select value from jsonb_array_elements(h->'speakers') loop
  pos=pos+1;insert into ps_speaker_assignments values(p_event_id,(h->>'id')::uuid,(item#>>'{}')::uuid,pos) on conflict(event_id,heat_id,entry_id) do update set position=excluded.position;end loop;
- for item in select value from jsonb_array_elements_text(h->'judges') loop
+ for item in select value from jsonb_array_elements(h->'judges') loop
  insert into ps_judge_assignments(event_id,heat_id,entry_id) values(p_event_id,(h->>'id')::uuid,(item#>>'{}')::uuid) on conflict do nothing;end loop;
  end loop;
  for b in select value from jsonb_array_elements(r->'ballots') loop
  bid=(b->>'id')::uuid;
- select jsonb_build_object('status',x.status,'rows',(select coalesce(jsonb_agg(to_jsonb(p)),'[]') from ps_performances p where p.event_id=p_event_id and p.ballot_id=bid),'scores',(select coalesce(jsonb_agg(to_jsonb(s)),'[]') from ps_criterion_scores s where s.event_id=p_event_id and s.ballot_id=bid)) into old_ballot from ps_ballot_records x where x.event_id=p_event_id and x.id=bid;
- if old_ballot is not null and p_action in ('ballot','reopen-ballot','approve-ballot','performance-feedback') then
+ select jsonb_build_object('status',x.status,'rows',(select coalesce(jsonb_agg(to_jsonb(pp)),'[]') from ps_performances pp where pp.event_id=p_event_id and pp.ballot_id=bid),'scores',(select coalesce(jsonb_agg(to_jsonb(cs)),'[]') from ps_criterion_scores cs where cs.event_id=p_event_id and cs.ballot_id=bid)) into old_ballot from ps_ballot_records x where x.event_id=p_event_id and x.id=bid;
+ if old_ballot is not null and exists(select 1 from ps_ballot_records x where x.event_id=p_event_id and x.id=bid and x.version<coalesce((b->>'version')::integer,1)) then
  insert into ps_ballot_revisions(event_id,ballot_id,version,snapshot,actor,reason) select p_event_id,bid,x.version,old_ballot,p_actor,p_reason from ps_ballot_records x where x.event_id=p_event_id and x.id=bid on conflict do nothing;
  end if;
  insert into ps_ballot_records(event_id,id,heat_id,round_id,judge_id,status,version,assignment_version,origin,source_id,entered_by,updated_at)
@@ -252,3 +254,57 @@ begin
  if p_request_key is not null then insert into ps_request_receipts values(p_event_id,p_request_key,p_actor,p_payload_hash,new_version,now());end if;
  return ps_v2_load(p_event_id);
 end $$;
+
+-- Remove PS v2 data with its tournament (works for text or UUID tournament IDs).
+create or replace function public.ps_v2_cleanup_tournament()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.ps_competitions where tournament_id = old.id::text;
+  delete from public.ps_availability where tournament_id = old.id::text;
+  delete from public.ps_room_resources where tournament_id = old.id::text;
+  return old;
+end;
+$$;
+revoke all on function public.ps_v2_cleanup_tournament() from public, anon, authenticated;
+drop trigger if exists ps_v2_cleanup on public.tournaments;
+create trigger ps_v2_cleanup before delete on public.tournaments
+for each row execute function public.ps_v2_cleanup_tournament();
+
+-- One-off, rerunnable copy of v1 aggregate events (public-speaking.sql) into v2.
+-- Returns how many events were copied; events already in v2 are skipped.
+create or replace function public.ps_migrate_v1_to_v2() returns integer
+language plpgsql security definer set search_path = public as $$
+declare old_event public.ps_events; copied integer := 0;
+begin
+  for old_event in select * from public.ps_events e
+    where not exists (select 1 from public.ps_competitions c where c.id = e.id) order by created_at loop
+    perform public.ps_v2_commit(old_event.id, old_event.tournament_id, 0, old_event.state, 'system:migration', 'migrate-v1', 'Copied from v1 aggregate storage');
+    copied := copied + 1;
+  end loop;
+  return copied;
+end;
+$$;
+revoke all on function public.ps_v2_load(uuid) from public, anon, authenticated;
+grant execute on function public.ps_v2_load(uuid) to service_role;
+revoke all on function public.ps_v2_commit(uuid,text,integer,jsonb,text,text,text,uuid,text) from public, anon, authenticated;
+grant execute on function public.ps_v2_commit(uuid,text,integer,jsonb,text,text,text,uuid,text) to service_role;
+revoke all on function public.ps_migrate_v1_to_v2() from public, anon, authenticated;
+grant execute on function public.ps_migrate_v1_to_v2() to service_role;
+
+create or replace function public.ps_v2_list(p_tournament_id text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'name', c.name, 'type', c.discipline, 'version', c.version,
+    'speakers', (select count(*) from ps_entries x where x.event_id = c.id and x.role = 'speaker'),
+    'rounds', (select count(*) from ps_round_records r where r.event_id = c.id)) order by c.created_at), '[]')
+  from ps_competitions c where c.tournament_id = p_tournament_id;
+$$;
+create or replace function public.ps_v2_audit(p_event_id uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'actor', a.actor, 'action', a.action, 'reason', a.reason, 'version', a.version, 'created_at', a.created_at) order by a.id desc), '[]')
+  from (select * from ps_audit_events where event_id = p_event_id order by id desc limit 100) a;
+$$;
+revoke all on function public.ps_v2_list(text) from public, anon, authenticated;
+grant execute on function public.ps_v2_list(text) to service_role;
+revoke all on function public.ps_v2_audit(uuid) from public, anon, authenticated;
+grant execute on function public.ps_v2_audit(uuid) to service_role;
+commit;

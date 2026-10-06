@@ -4,7 +4,10 @@ Public Speaking is an additional tournament workspace at `#/tournament/public-sp
 
 ## Activate
 
-1. Run `supabase/public-speaking.sql` in the **existing** Supabase project's SQL editor. It is additive and safe to rerun. Back up the database through your normal deployment process first.
+1. Back up the database, then run these in the **existing** Supabase project's SQL editor, in order (both are additive and safe to rerun):
+   1. `supabase/public-speaking.sql` — original storage, kept so existing PS events can be migrated.
+   2. `supabase/ps-v2.sql` — normalised tables the app now uses.
+   3. `select public.ps_migrate_v1_to_v2();` — copies any events created with the first version. Returns how many were copied; rerunning copies nothing twice.
 2. Configure the existing `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and server-only `SUPABASE_SERVICE_ROLE_KEY` in the hosting environment. Never expose the service key with a `VITE_` prefix.
 3. Deploy this branch through the existing Vercel build (`npm ci`, `npm run build`). The new `/api/public-speaking` route is a Vercel function. Local `npm run dev` also serves it.
 4. Open a tournament as its owner or an admin. Choose **Public speaking → Events & tabulation**.
@@ -43,15 +46,13 @@ Each criterion contributes `(mark / maximum) × weight`. Weights total 100, so e
 
 ## Storage and access
 
-`ps_events` stores an event's validated, versioned JSON aggregate (roster, rubric, draws, ballots, evaluations and release flags). `ps_audit` stores actor/action/reason/version and the previous aggregate. These tables are separate from BP tables. This implementation deliberately keeps an event mutation atomic; it is not a table per ballot/speaker.
+PS data lives in normalised tables (`supabase/ps-v2.sql`): competitions, rule sets, entries, rounds, heats, speaker/judge assignments, ballots with revisions, performances, criterion scores, evaluations, audit events, request receipts, access tokens, registration forms/submissions, conflicts, help requests, announcements and a notification outbox. Foreign keys and uniqueness constraints keep records scoped to their event.
 
-Both tables have RLS enabled and grants revoked for `anon` and `authenticated`. The service-role-only `ps_commit` transaction locks the event row, checks its version, writes its new state and audit snapshot together. Stale submissions get HTTP 409 and are not overwritten. The UI reloads the latest revision while retaining an open ballot form for review and resubmission.
+The engine (`api-shared/ps-engine.js`) works on a loaded event and the `ps_v2_commit` function writes the result in one transaction: it locks the event, checks its version (stale writes get HTTP 409), records an audit event, keeps the previous version of any changed ballot in `ps_ballot_revisions`, and stores a request receipt. Clients may send a `requestKey` (UUID); retrying the same request returns the saved result instead of applying it twice, and reusing a key for a different request is refused.
 
-All PS reads/writes go through the API. Admin identity is validated against Supabase Auth and the existing tournament ownership/membership roles. Participant tokens are purpose-specific HMAC tokens, distinct from existing BP links. Tokens are issued only by tournament administrators. Public/participant responses are explicit projections, never the raw aggregate. Public responses contain no ballots, scoring drafts, link versions or private evaluations.
+All tables have RLS enabled and no grants for `anon`/`authenticated`; only the service role (the API) can call the `ps_v2_*` functions. Deleting a tournament deletes its PS data. Participant tokens are purpose-specific HMAC tokens, distinct from BP links. Public/participant responses are explicit projections, never the raw event.
 
-A tournament deletion trigger removes its PS events and their audit records, including when deletion uses the pre-existing RPC or API path. Tournament IDs are handled as text for compatibility with the repository's mixed UUID/text schema. The commit function verifies that the tournament exists.
-
-Limits: 2,000 people per role per event, 30 rounds, 100 rooms per round, 50 speakers/10 scoring judges per room, and 500 roster additions per request. These are validation limits, not load-test guarantees. Every mutation currently reads and rewrites one event aggregate and stores a prior snapshot; large events/high submission concurrency should move to normalized ballot tables and an audit retention policy. No production-scale load test has been performed.
+`tests/ps-db.test.js` runs the migrations in PGlite and checks that every mutation of a full tournament round-trips exactly, plus idempotent retries, stale-write rejection, tournament scoping, browser-role denial, deletion cleanup and v1→v2 migration. `tests/public-speaking-api.test.js` exercises the API against the same database.
 
 ## Deliberately outside this implementation
 

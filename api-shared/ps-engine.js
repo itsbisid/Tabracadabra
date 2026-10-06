@@ -191,13 +191,14 @@ export function mutateEvent(original, action, input, actor) {
       });
       assert(new Set(rows.map(r => r.rank)).size === rows.length, 'Each speaker needs a unique rank within this ballot.');
       assert(['draft', 'submitted'].includes(input.status), 'Invalid ballot status.');
-      const ballot = { id: existing?.id || randomUUID(), roomId: room.id, judgeId, rows, status: input.status, updatedAt: now, enteredBy: actor.id };
+      const ballot = { id: existing?.id || randomUUID(), roomId: room.id, judgeId, rows, status: input.status, updatedAt: now, enteredBy: actor.id, version: (existing?.version || 0) + 1 };
       round.ballots = [...round.ballots.filter(b => b.id !== ballot.id), ballot];
     } else if (action === 'approve-ballot' || action === 'reopen-ballot') {
       assert(round.status === 'open', 'Only an open round can have its ballots changed.');
       const ballot = find(round.ballots, input.ballotId, 'Ballot');
       if (action === 'approve-ballot') { assert(ballot.status === 'submitted', 'Submit the ballot before approving.'); ballot.status = 'approved'; }
       else { assert(text(input.reason, 1000), 'Record a correction reason.'); ballot.status = 'draft'; }
+      ballot.version = (ballot.version || 1) + 1; ballot.updatedAt = now;
     } else if (action === 'complete-round') {
       assert(round.status === 'open', 'Only an open round can be completed.');
       assert(roundResults(event, round).length === round.speakerIds.length, 'Every assigned judge must have an approved ballot before completing the round.');
