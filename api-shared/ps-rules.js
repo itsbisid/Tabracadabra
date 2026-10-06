@@ -6,7 +6,38 @@ export const EXAMPLE_PRESETS = {
   impromptu: [{ id: 'ideas', name: 'Ideas', max: 30, weight: 30 }, { id: 'organisation', name: 'Organisation', max: 30, weight: 30 }, { id: 'delivery', name: 'Delivery', max: 40, weight: 40 }],
   interpretation: [{ id: 'interpretation', name: 'Interpretation', max: 40, weight: 40 }, { id: 'performance', name: 'Performance', max: 40, weight: 40 }, { id: 'selection', name: 'Selection', max: 20, weight: 20 }]
 };
+// Rank-points ("we rank, we do not score"), e.g. GUDC 2026: judges submit an order only;
+// 1st earns `pointsTop`, each place below one point less (anchored at the top, never below 0).
+export const TIE_BREAKS = {
+  judgeFirsts: 'Judge firsts',
+  headToHead: 'Head to head',
+  bandProfile: 'Band profile',
+  totalMinusWeakest: 'Total minus weakest round',
+  chairBallot: "Chair's ballot"
+};
+export const DEFAULT_TIE_BREAKS = Object.keys(TIE_BREAKS);
+export const GUDC_GUIDANCE = {
+  prepared: [{ id: 'response', name: 'Response to topic' }, { id: 'content', name: 'Content and argument' }, { id: 'structure', name: 'Structure' }, { id: 'delivery', name: 'Delivery' }],
+  impromptu: [{ id: 'response', name: 'Response to topic' }, { id: 'structure', name: 'Structure under pressure' }, { id: 'delivery', name: 'Delivery' }],
+  poi: [{ id: 'cohesion', name: 'Thematic cohesion' }, { id: 'merit', name: 'Literary merit' }, { id: 'delivery', name: 'Interpretive delivery', description: 'Vocal variety, physical expression, emotional engagement' }]
+};
+export const rankPoints = (rules, rank) => Math.max(0, rules.pointsTop + 1 - rank);
+
+// Criteria in rank-points mode guide judges; they carry no marks or weights.
+function guidance(criteria) {
+  ensure(Array.isArray(criteria) && criteria.length > 0 && criteria.length <= 12, 'Use 1–12 judging criteria.');
+  const list = criteria.map((c, i) => {
+    ensure(typeof c.name === 'string' && c.name.trim() && c.name.length <= 160, 'Each criterion needs a name.');
+    const id = c.id || `criterion_${i}`;
+    ensure(/^[a-zA-Z0-9_-]{1,80}$/.test(id), 'Invalid criterion ID.');
+    return { id, name: c.name.trim(), description: String(c.description || '').slice(0, 1000) };
+  });
+  ensure(new Set(list.map(c => c.name.toLowerCase())).size === list.length, 'Criterion names must be unique.');
+  return list;
+}
+
 export function validateRules(input) {
+  if ((input.scoring || 'score') === 'points') return validatePointsRules(input);
   const criteria = input.rubric || EXAMPLE_PRESETS.prepared;
   ensure(Array.isArray(criteria) && criteria.length > 0 && criteria.length <= 12, 'Use 1–12 criteria.');
   const rubric = criteria.map((c, i) => {
@@ -38,6 +69,16 @@ export function validateRules(input) {
     feedbackDeadline: input.feedbackDeadline || null, penalty: { ...penalty, stepSeconds: int(Number(penalty.stepSeconds || 10), 1, 600, 'Penalty interval') }
   };
 }
+function validatePointsRules(input) {
+  // Validate the shared settings (heats, panels, timing, rounds) through the standard path, then
+  // replace the scoring parts. Timing penalties do not apply: there are no marks to deduct from.
+  const base = validateRules({ ...input, scoring: 'score', rubric: [{ id: 'overall', name: 'Overall', max: 100, weight: 100 }], penalty: { method: 'none', pointsPerStep: 0, stepSeconds: 10, cap: 0 } });
+  const tieBreaks = input.tieBreaks == null ? DEFAULT_TIE_BREAKS : input.tieBreaks;
+  ensure(Array.isArray(tieBreaks) && tieBreaks.every(t => t in TIE_BREAKS) && new Set(tieBreaks).size === tieBreaks.length, 'Choose tie-breaks from the supported list, each at most once.');
+  return { ...base, scoring: 'points', aggregation: 'mean', rubric: guidance(input.rubric || GUDC_GUIDANCE.prepared),
+    pointsTop: int(Number(input.pointsTop ?? 10), 1, 100, 'Points for first place'), tieBreaks: [...tieBreaks] };
+}
+
 export function calculatePerformance(rules, row) {
   ensure(Array.isArray(row.scores) && row.scores.length === rules.rubric.length, 'Every criterion needs a score.');
   const breakdown = rules.rubric.map((c, i) => {
@@ -63,7 +104,7 @@ export function capacityPlan({ entrants, rooms, judges, rules }) {
   const problems = [];
   if (entrants && minPossible < rules.minHeat) problems.push('Redistribution cannot satisfy the minimum heat size. Revise the section limits.');
   if (entrants && !concurrency) problems.push('Add an available room and a full judging panel.');
-  if (rules.scoring === 'rank' && rules.rankPolicy === 'equal-heats' && entrants % heats) problems.push('Rank-sum standings require equal heat sizes. Choose within-heat progression or revise the field/limits.');
+  if (rules.scoring === 'rank' && rules.rankPolicy === 'equal-heats' && heats && entrants % heats) problems.push('Rank-sum standings require equal heat sizes. Choose within-heat progression or revise the field/limits.');
   return { heats, concurrency, waves, heatSeconds, estimatedSeconds: heatSeconds * waves, standbyJudges: judges - concurrency * rules.panelSize, feasible: problems.length === 0, problems, note: 'Capacity estimate before personal conflicts, room accessibility and availability are applied.' };
 }
 export function scheduleConflicts(heats, bookings = [], bufferSeconds = 0) {

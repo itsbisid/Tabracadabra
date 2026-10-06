@@ -1,7 +1,7 @@
 // Public speaking rules. Shared by the API and tests; never trusts client totals.
 import { randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
-import { validateRules, calculatePerformance, capacityPlan, EXAMPLE_PRESETS } from './ps-rules.js';
+import { validateRules, calculatePerformance, capacityPlan, rankPoints, EXAMPLE_PRESETS, TIE_BREAKS } from './ps-rules.js';
 
 export { EXAMPLE_PRESETS };
 
@@ -25,10 +25,10 @@ const rounded = x => Math.round((x + Number.EPSILON) * 10000) / 10000;
 // settings fall back to the documented defaults there.
 const RULE_KEYS = ['rubric', 'scoring', 'aggregation', 'minHeat', 'maxHeat', 'panelSize', 'finalPanelSize', 'rankPolicy', 'feedbackPolicy', 'timezone',
   'preliminaryRounds', 'breakSize', 'durationSeconds', 'preparationSeconds', 'graceSeconds', 'changeoverSeconds', 'deliberationSeconds', 'travelSeconds',
-  'roomCount', 'precision', 'feedbackDeadline', 'penalty'];
+  'roomCount', 'precision', 'feedbackDeadline', 'penalty', 'pointsTop', 'tieBreaks'];
 function settings(input) {
   const rules = validateRules({ ...input, rubric: input.rubric || DEFAULT_RUBRIC });
-  return Object.fromEntries(RULE_KEYS.map(k => [k, rules[k]]));
+  return Object.fromEntries(RULE_KEYS.filter(k => rules[k] !== undefined).map(k => [k, rules[k]]));
 }
 const ruleCache = new WeakMap();
 export function rulesOf(event) {
@@ -58,6 +58,7 @@ export function createEvent(input) {
 export function scoreRow(event, row) {
   return calculatePerformance(rulesOf(event), row).total;
 }
+const isAbsent = row => Boolean(row.absent) || row.rank == null;
 
 // One result per speaker per room, from approved ballots only. Every judge counts equally.
 export function roundResults(event, round) {
@@ -65,6 +66,21 @@ export function roundResults(event, round) {
   for (const room of round.rooms) {
     const ballots = room.judges.map(judgeId => round.ballots.find(b => b.roomId === room.id && b.judgeId === judgeId && b.status === 'approved'));
     if (!ballots.length || ballots.some(b => !b)) continue;
+    if (rules.scoring === 'points') {
+      // Ranks only. Each judge's rank converts to points (1st = pointsTop, anchored at the top);
+      // the room result is the panel total, standings use the panel mean. Absent speakers are not ranked.
+      for (const speakerId of room.speakers) {
+        const rows = ballots.map((b, i) => ({ judgeId: b.judgeId, chair: i === 0, row: b.rows.find(r => r.speakerId === speakerId) }));
+        if (rows.some(x => !x.row || isAbsent(x.row))) { results.push({ speakerId, roundId: round.id, roomId: room.id, heatSize: room.speakers.length, absent: true, score: 0, panelTotal: 0, judgeCount: rows.length, ranks: [], firsts: 0, chairPoints: 0, meanRank: null, position: null, judges: [] }); continue; }
+        const judged = rows.map(x => ({ judgeId: x.judgeId, chair: x.chair, rank: x.row.rank, points: rankPoints(rules, x.row.rank) }));
+        const panelTotal = judged.reduce((t, x) => t + x.points, 0);
+        results.push({ speakerId, roundId: round.id, roomId: room.id, heatSize: room.speakers.length, absent: false,
+          score: new Decimal(panelTotal).div(judged.length).toDecimalPlaces(4).toNumber(), panelTotal, judgeCount: judged.length,
+          ranks: judged.map(x => x.rank), firsts: judged.filter(x => x.rank === 1).length, chairPoints: judged[0].points,
+          meanRank: new Decimal(judged.reduce((t, x) => t + x.rank, 0)).div(judged.length).toDecimalPlaces(4).toNumber(), position: null, judges: judged });
+      }
+      continue;
+    }
     for (const speakerId of room.speakers) {
       const judged = ballots.map(b => {
         const row = b.rows.find(r => r.speakerId === speakerId);
@@ -82,25 +98,62 @@ export function roundResults(event, round) {
   return results;
 }
 
-// Equal judge weight; equal round weight. Exact ties share a place.
+// Equal judge weight; equal round weight. Exact ties share a place unless a configured tie-break separates them.
 export function standings(event, rounds = event.rounds.filter(r => r.stage === 'preliminary' && r.status === 'completed')) {
-  const rows = new Map();
+  const rules = rulesOf(event), points = rules.scoring === 'points';
+  const rows = new Map(), shared = [];
   for (const round of rounds) for (const result of roundResults(event, round)) {
     const speaker = event.speakers.find(s => s.id === result.speakerId);
-    if (!rows.has(speaker.id)) rows.set(speaker.id, { speakerId: speaker.id, name: speaker.name, institution: speaker.institution, category: speaker.category, active: speaker.active, rounds: 0, score: 0, rankTotal: 0 });
+    if (!rows.has(speaker.id)) rows.set(speaker.id, { speakerId: speaker.id, name: speaker.name, institution: speaker.institution, category: speaker.category, active: speaker.active, rounds: 0, appearances: 0, score: 0, rankTotal: 0, judgeFirsts: 0, chairPoints: 0, band: [], roundScores: [] });
     const row = rows.get(speaker.id);
+    row.appearances++;
+    row.roundScores.push(result.score);
+    if (result.absent) continue;
     row.rounds++;
     row.score = rounded(row.score + result.score);
-    row.rankTotal = rounded(row.rankTotal + (rulesOf(event).rankPolicy === 'within-heat' ? result.position : result.meanRank));
+    if (points) {
+      row.rankTotal = rounded(row.rankTotal + result.meanRank);
+      row.judgeFirsts += result.firsts; row.chairPoints += result.chairPoints;
+      for (const r of result.ranks) row.band[r - 1] = (row.band[r - 1] || 0) + 1;
+      shared.push(result);
+    } else row.rankTotal = rounded(row.rankTotal + (rules.rankPolicy === 'within-heat' ? result.position : result.meanRank));
   }
-  const compare = event.scoring === 'rank'
-    ? (a, b) => a.rankTotal - b.rankTotal || b.score - a.score
+  for (const row of rows.values()) row.minusWeakest = rounded(row.score - (row.roundScores.length > 1 ? Math.min(...row.roundScores) : 0));
+  const primary = points ? (a, b) => b.score - a.score
+    : rules.scoring === 'rank' ? (a, b) => a.rankTotal - b.rankTotal || b.score - a.score
     : (a, b) => b.score - a.score || a.rankTotal - b.rankTotal;
-  const sorted = [...rows.values()].sort((a, b) => compare(a, b) || a.name.localeCompare(b.name));
-  return sorted.map((row, i) => ({ ...row, average: rounded(row.score / row.rounds), place: i && compare(row, sorted[i - 1]) === 0 ? 0 : i + 1 })).map((row, i, all) => {
-    if (!row.place) row.place = all[i - 1].place;
-    return row;
-  });
+  const sorted = [...rows.values()].sort((a, b) => primary(a, b) || a.name.localeCompare(b.name));
+  // Group equal primary results, then (rank-points) apply the tie-break chain in order.
+  const groups = [];
+  for (const row of sorted) { const last = groups.at(-1); if (last && primary(last[0], row) === 0) last.push(row); else groups.push([row]); }
+  const resolved = points ? groups.flatMap(g => resolveTie(g, rules.tieBreaks, shared)) : groups;
+  let place = 1;
+  return resolved.flatMap(group => { const out = group.map(row => ({ ...row, average: row.rounds ? rounded(row.score / row.rounds) : 0, place })); place += group.length; return out; });
+}
+
+// Tie-break keys; higher is better. Head to head is relative to the tied group.
+function tieKey(name, row, group, shared) {
+  if (name === 'judgeFirsts') return [row.judgeFirsts];
+  if (name === 'bandProfile') { const n = Math.max(...group.map(r => r.band.length), 0); return Array.from({ length: n }, (_, i) => row.band[i] || 0); }
+  if (name === 'totalMinusWeakest') return [row.minusWeakest];
+  if (name === 'chairBallot') return [row.chairPoints];
+  if (name === 'headToHead') {
+    const ids = new Set(group.map(r => r.speakerId));
+    let wins = 0;
+    for (const mine of shared.filter(x => x.speakerId === row.speakerId)) for (const other of shared.filter(x => x.roomId === mine.roomId && x.roundId === mine.roundId && x.speakerId !== row.speakerId && ids.has(x.speakerId))) wins += Math.sign(other.meanRank - mine.meanRank);
+    return [wins];
+  }
+  return [0];
+}
+const cmpKeys = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (b[i] || 0) - (a[i] || 0); if (d) return d; } return 0; };
+function resolveTie(group, chain, shared) {
+  if (group.length < 2 || !chain.length) return [group];
+  const [name, ...rest] = chain;
+  const keyed = group.map(row => ({ row, key: tieKey(name, row, group, shared) })).sort((a, b) => cmpKeys(a.key, b.key) || a.row.name.localeCompare(b.row.name));
+  const parts = [];
+  for (const k of keyed) { const last = parts.at(-1); if (last && cmpKeys(last[0].key, k.key) === 0) last.push(k); else parts.push([k]); }
+  if (parts.length > 1) for (const part of parts) for (const k of part) k.row.tieBreak = k.row.tieBreak || TIE_BREAKS[name];
+  return parts.flatMap(part => resolveTie(part.map(k => k.row), rest, shared));
 }
 
 function validateRooms(event, rooms, expected) {
@@ -151,11 +204,13 @@ export function allocationWarnings(event, round) {
 function breakSpeakers(event, input) {
   const completed = event.rounds.filter(r => r.stage === 'preliminary' && r.status === 'completed');
   assert(completed.length && !event.rounds.some(r => r.stage === 'preliminary' && r.status !== 'completed'), 'Complete all preliminary rounds before generating a break.');
-  const ranked = standings(event, completed).filter(s => s.active && s.rounds === completed.length && (!input.category || s.category === input.category));
+  // Eligible: active and drawn in every preliminary round (rank-points: absences score 0 but do not disqualify).
+  const points = rulesOf(event).scoring === 'points';
+  const ranked = standings(event, completed).filter(s => s.active && (points ? s.appearances : s.rounds) === completed.length && (!input.category || s.category === input.category));
   const count = integer(input.breakSize, 1, ranked.length);
   const cutoff = ranked[count - 1];
-  const better = ranked.filter(s => event.scoring === 'rank' ? s.rankTotal < cutoff.rankTotal || (s.rankTotal === cutoff.rankTotal && s.score > cutoff.score) : s.score > cutoff.score || (s.score === cutoff.score && s.rankTotal < cutoff.rankTotal));
-  const tied = ranked.filter(s => s.score === cutoff.score && s.rankTotal === cutoff.rankTotal);
+  const better = ranked.filter(s => s.place < cutoff.place);
+  const tied = ranked.filter(s => s.place === cutoff.place);
   const needed = count - better.length;
   if (tied.length > needed) {
     assert(Array.isArray(input.tieSelections) && input.tieSelections.length === needed && new Set(input.tieSelections).size === needed && input.tieSelections.every(id => tied.some(s => s.speakerId === id)), `Break cutoff is tied between ${tied.map(s => s.name).join(', ')}. Select ${needed} tied speaker(s) and record a reason.`);
@@ -197,7 +252,9 @@ export function mutateEvent(original, action, input, actor) {
     const stage = action === 'create-break' ? 'final' : (input.stage || 'preliminary');
     assert(['preliminary', 'semifinal', 'final'].includes(stage), 'Invalid round stage.');
     assert(!(stage === 'preliminary' && event.rounds.some(r => r.stage !== 'preliminary')), 'Preliminary rounds cannot follow elimination rounds.');
-    event.rounds.push({ id: randomUUID(), name: required(input.name), stage, speakerIds: [...ids], status: 'draft', drawPublished: false, resultsPublished: false, feedbackPublished: false, rooms: [], ballots: [], judgeFeedback: [], breakReason: text(input.reason, 1000), createdAt: now });
+    const timeSeconds = input.timeSeconds == null || input.timeSeconds === '' ? null : integer(Number(input.timeSeconds), 30, 3600);
+    const guidanceList = Array.isArray(input.guidance) ? input.guidance.map(g => text(g, 300)).filter(Boolean).slice(0, 12) : [];
+    event.rounds.push({ id: randomUUID(), name: required(input.name), format: text(input.format, 120), brief: text(input.brief, 2000), timeSeconds, guidance: guidanceList, stage, speakerIds: [...ids], status: 'draft', drawPublished: false, resultsPublished: false, feedbackPublished: false, rooms: [], ballots: [], judgeFeedback: [], breakReason: text(input.reason, 1000), createdAt: now });
   } else {
     const round = find(event.rounds, input.roundId, 'Round');
     if (action === 'save-draw') {
@@ -222,14 +279,29 @@ export function mutateEvent(original, action, input, actor) {
       const existing = round.ballots.find(b => b.roomId === room.id && b.judgeId === judgeId);
       assert(!existing || existing.status === 'draft', 'This ballot is locked. Ask tab to reopen it.');
       assert(Array.isArray(input.rows) && input.rows.length === room.speakers.length && new Set(input.rows.map(r => r.speakerId)).size === room.speakers.length && input.rows.every(r => room.speakers.includes(r.speakerId)), 'A ballot must contain every speaker in this room exactly once.');
-      const rows = input.rows.map(row => {
-        const elapsed = row.elapsedSeconds == null || row.elapsedSeconds === '' ? null : Number(row.elapsedSeconds);
-        assert(elapsed === null || (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 7200), 'Elapsed time must be between 0 and 7200 seconds.');
-        scoreRow(event, { ...row, elapsedSeconds: elapsed ?? undefined });
-        return { speakerId: row.speakerId, scores: [...row.scores], rank: integer(row.rank, 1, room.speakers.length), elapsedSeconds: elapsed,
-          feedback: text(row.feedback, 5000), worked: text(row.worked, 3000), improve: text(row.improve, 3000), nextStep: text(row.nextStep, 3000) };
-      });
-      assert(new Set(rows.map(r => r.rank)).size === rows.length, 'Each speaker needs a unique rank within this ballot.');
+      const pointsMode = rulesOf(event).scoring === 'points';
+      let rows;
+      if (pointsMode) {
+        // "We rank, we do not score": an order only, no ties, absent speakers are not ranked.
+        rows = input.rows.map(row => {
+          const absent = Boolean(row.absent);
+          assert(absent || !(Array.isArray(row.scores) && row.scores.length), 'Ballots in this event carry ranks only, not scores.');
+          return { speakerId: row.speakerId, scores: [], absent, rank: absent ? null : integer(row.rank, 1, room.speakers.length), elapsedSeconds: null,
+            feedback: text(row.feedback, 5000), worked: text(row.worked, 3000), improve: text(row.improve, 3000), nextStep: text(row.nextStep, 3000) };
+        });
+        const present = rows.filter(r => !r.absent);
+        assert(present.length > 0, 'Rank at least one speaker. Mark only speakers who did not speak as absent.');
+        assert(new Set(present.map(r => r.rank)).size === present.length && present.every(r => r.rank <= present.length), `No ties: rank the ${present.length} speaker(s) who spoke from 1 to ${present.length}, each once.`);
+      } else {
+        rows = input.rows.map(row => {
+          const elapsed = row.elapsedSeconds == null || row.elapsedSeconds === '' ? null : Number(row.elapsedSeconds);
+          assert(elapsed === null || (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 7200), 'Elapsed time must be between 0 and 7200 seconds.');
+          scoreRow(event, { ...row, elapsedSeconds: elapsed ?? undefined });
+          return { speakerId: row.speakerId, scores: [...row.scores], rank: integer(row.rank, 1, room.speakers.length), elapsedSeconds: elapsed,
+            feedback: text(row.feedback, 5000), worked: text(row.worked, 3000), improve: text(row.improve, 3000), nextStep: text(row.nextStep, 3000) };
+        });
+        assert(new Set(rows.map(r => r.rank)).size === rows.length, 'Each speaker needs a unique rank within this ballot.');
+      }
       assert(['draft', 'submitted'].includes(input.status), 'Invalid ballot status.');
       const ballot = { id: existing?.id || randomUUID(), roomId: room.id, judgeId, rows, status: input.status, updatedAt: now, enteredBy: actor.id, version: (existing?.version || 0) + 1 };
       round.ballots = [...round.ballots.filter(b => b.id !== ballot.id), ballot];
@@ -266,13 +338,13 @@ export function projectEvent(event, actor = { role: 'public' }) {
   const published = event.rounds.filter(r => r.drawPublished);
   const visibleResults = published.filter(r => r.resultsPublished && r.status === 'completed');
   return {
-    name: event.name, type: event.type, rubric: rulesOf(event).rubric, scoring: event.scoring, durationSeconds: rulesOf(event).durationSeconds, penalty: rulesOf(event).penalty,
+    name: event.name, type: event.type, rubric: rulesOf(event).rubric, scoring: event.scoring, pointsTop: rulesOf(event).pointsTop, tieBreaks: rulesOf(event).tieBreaks, durationSeconds: rulesOf(event).durationSeconds, penalty: rulesOf(event).penalty,
     participant: person ? { id: person.id, name: person.name, checkedIn: person.checkedIn, role: actor.role } : null,
     speakers: event.speakers.filter(s => published.some(r => r.rooms.some(room => room.speakers.includes(s.id)))).map(s => ({ id: s.id, name: s.name, institution: s.institution, category: s.category })),
     judges: event.judges.filter(j => published.some(r => r.rooms.some(room => room.judges.includes(j.id)))).map(j => ({ id: j.id, name: j.name })),
     standings: standings(event, visibleResults.filter(r => r.stage === 'preliminary')),
     rounds: published.map(r => ({
-      id: r.id, name: r.name, stage: r.stage, status: r.status, rooms: r.rooms,
+      id: r.id, name: r.name, format: r.format || '', brief: r.brief || '', timeSeconds: r.timeSeconds || null, guidance: r.guidance || [], stage: r.stage, status: r.status, rooms: r.rooms,
       resultsPublished: r.resultsPublished, feedbackPublished: r.feedbackPublished,
       results: r.resultsPublished && r.status === 'completed' ? roundResults(event, r) : [],
       standings: r.resultsPublished && r.status === 'completed' ? standings(event, [r]) : [],
