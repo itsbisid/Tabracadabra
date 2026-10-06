@@ -30,19 +30,18 @@ let s = createEvent({ name: 'DEMO Prepared Speech', type: 'Prepared speech', rub
 s = mutateEvent(s, 'add-speakers', { people: Array.from({ length: 12 }, (_, i) => ({ name: `Demo Speaker ${i + 1}`, institution: `Demo School ${String.fromCharCode(65 + (i % 4))}`, category: i % 3 ? 'Open' : 'Novice' })) }, admin);
 s = mutateEvent(s, 'add-judges', { people: Array.from({ length: 4 }, (_, i) => ({ name: `Demo Judge ${i + 1}`, institution: `Demo Judging Pool ${i + 1}` })) }, admin);
 s = mutateEvent(s, 'create-round', { name: 'Round 1', speakerIds: s.speakers.map(p => p.id) }, admin);
-const ids = s.speakers.map(p => p.id);
-s = mutateEvent(s, 'save-draw', { roundId: s.rounds[0].id, rooms: [
-  { name: 'Room 1', speakers: [ids[0], ids[5], ids[10], ids[3], ids[8], ids[1]], judges: [s.judges[0].id, s.judges[1].id] },
-  { name: 'Room 2', speakers: [ids[6], ids[11], ids[4], ids[9], ids[2], ids[7]], judges: [s.judges[2].id, s.judges[3].id] }] }, admin);
-s = mutateEvent(s, 'open-round', { roundId: s.rounds[0].id }, admin);
+const { proposeDraw } = await import('./api-shared/ps-draw.js');
+const proposed = proposeDraw(s, s.rounds[0], { seed: 'demo-round-1', roomNames: ['Room 1', 'Room 2'] });
+s = mutateEvent(s, 'save-draw', { roundId: s.rounds[0].id, rooms: proposed.rooms }, admin);
+s = mutateEvent(s, 'open-round', { roundId: s.rounds[0].id, reason: 'Demo draw' }, admin);
 const room = s.rounds[0].rooms[0];
-s = mutateEvent(s, 'ballot', { roundId: s.rounds[0].id, roomId: room.id, status: 'submitted', rows: room.speakers.map((speakerId, i) => ({ speakerId, rank: i + 1, scores: [34 - i * 2, 30 - i * 2, 21 - i], elapsedSeconds: i === 2 ? 330 : 290, worked: 'Demo: clear opening and structure.', improve: 'Demo: slow down in the conclusion.', nextStep: 'Demo: practise with a timer.' })) }, { role: 'judge', id: s.judges[0].id });
+s = mutateEvent(s, 'ballot', { roundId: s.rounds[0].id, roomId: room.id, status: 'submitted', rows: room.speakers.map((speakerId, i) => ({ speakerId, rank: i + 1, scores: [34 - i * 2, 30 - i * 2, 21 - i], elapsedSeconds: i === 2 ? 330 : 290, worked: 'Demo: clear opening and structure.', improve: 'Demo: slow down in the conclusion.', nextStep: 'Demo: practise with a timer.' })) }, { role: 'judge', id: room.judges[0] });
 const eventId = randomUUID();
 let version = 0;
 for (const state of [s]) { const [row] = await callRpc(db, 'ps_v2_commit', { p_event_id: eventId, p_tournament_id: TOURNAMENT_ID, p_version: version, p_state: state, p_actor: `admin:${OWNER.id}`, p_action: 'demo-seed', p_reason: 'Synthetic demo data', p_request_key: null, p_payload_hash: '' }); version = row.version; }
 const judgeLink = newToken('portal'), speakerLink = newToken('portal');
 const in14 = new Date(Date.now() + 14 * 86400000).toISOString();
-await callRpc(db, 'ps_v2_issue_token', { p_event_id: eventId, p_entry_id: s.judges[1].id, p_hash: hashToken(judgeLink), p_purpose: 'portal', p_expires_at: in14, p_parent_hash: null, p_actor: 'system:demo', p_reason: 'Demo link' });
+await callRpc(db, 'ps_v2_issue_token', { p_event_id: eventId, p_entry_id: room.judges[1] || room.judges[0], p_hash: hashToken(judgeLink), p_purpose: 'portal', p_expires_at: in14, p_parent_hash: null, p_actor: 'system:demo', p_reason: 'Demo link' });
 await callRpc(db, 'ps_v2_issue_token', { p_event_id: eventId, p_entry_id: room.speakers[0], p_hash: hashToken(speakerLink), p_purpose: 'portal', p_expires_at: in14, p_parent_hash: null, p_actor: 'system:demo', p_reason: 'Demo link' });
 
 // ---- Server
@@ -58,7 +57,7 @@ const startPage = `<!doctype html><meta charset="utf-8"><meta name="viewport" co
 <style>body{font-family:system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#0f2b5b;background:#f4f7fb}a{display:block;padding:16px 20px;margin:12px 0;border-radius:10px;background:#0f2b5b;color:#fff;text-decoration:none;font-weight:600}a span{display:block;font-weight:400;opacity:.8;font-size:14px;margin-top:4px}p{color:#526174}</style>
 <h1>Public Speaking — local demo</h1><p>All names and scores are made-up demo data. Nothing is saved: closing the black window resets everything.</p>
 <a href="/demo" target="_blank">Organiser / tab view<span>Set up events, rooms, draws, approve ballots, results and links.</span></a>
-<a href="/#/ps/portal/${judgeLink}" target="_blank">Judge portal (Demo Judge 2)<span>Score Room 1 on a phone-style ballot. Each link opens once per browser tab.</span></a>
+<a href="/#/ps/portal/${judgeLink}" target="_blank">Judge portal (Room 1)<span>Score Room 1 on a phone-style ballot. Each link opens once per browser tab.</span></a>
 <a href="/#/ps/portal/${speakerLink}" target="_blank">Speaker portal (Demo Speaker 1)<span>Room, speaking order, released results and feedback.</span></a>`;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, ORIGIN);
@@ -85,7 +84,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('\n  TABRACADABRA PUBLIC SPEAKING - LOCAL DEMO (synthetic data, nothing is saved)\n');
   console.log(`  Start page:       ${ORIGIN}/start`);
   console.log(`  Organiser view:   ${ORIGIN}/demo`);
-  console.log(`  Judge portal:     ${ORIGIN}/#/ps/portal/${judgeLink}   (Demo Judge 2, Room 1)`);
+  console.log(`  Judge portal:     ${ORIGIN}/#/ps/portal/${judgeLink}   (a Room 1 judge)`);
   console.log(`  Speaker portal:   ${ORIGIN}/#/ps/portal/${speakerLink}`);
   console.log('\n  Keep this window open while you use the demo. Close it to stop.\n');
   if (process.platform === 'win32' && !process.env.NO_BROWSER) exec(`start "" "${ORIGIN}/start"`);
