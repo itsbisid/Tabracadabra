@@ -223,28 +223,26 @@ export async function renderPublicSpeaking(container) {
     const event = current.state, judges = event.judges.filter(j => j.active);
     let rooms = structuredClone(round.rooms);
     const drawEditor = () => `<p class="ps-help">Speaking order follows the number beside each speaker. Review conflicts before publishing. A judge cannot be assigned to two rooms in this round.</p>${rooms.map((room, ri) => `<fieldset class="ps-room"><legend>Room ${ri + 1}</legend>${field('Venue / room', input(`room-${ri}`, room.name, `required list="ps-venues-${ri}"`))}<datalist id="ps-venues-${ri}">${venues.map(v => `<option value="${h(v.name)}"></option>`).join('')}</datalist><div class="ps-checklist">${judges.map(j => `<label><input name="judges-${ri}" type="checkbox" value="${j.id}" ${room.judges.includes(j.id) ? 'checked' : ''}> ${h(j.name)} · ${h(j.institution || 'No institution')}</label>`).join('')}</div></fieldset>`).join('')}${table(['Speaker', 'Room', 'Speaking order'], round.speakerIds.map(id => { const ri = rooms.findIndex(r => r.speakers.includes(id)); return [h(nameOf(event.speakers, id)), select(`roomFor-${id}`, rooms.map((_, i) => [i, `Room ${i + 1}`]), ri), input(`order-${id}`, rooms[ri]?.speakers.indexOf(id) + 1 || 1, 'type="number" min="1" required')]; }))}${button('Save draw', 'type="submit"')}`;
-    const dialog = showDialog('Allocate speakers and judges', `<form class="ps-stack"><div class="ps-actions">${field('Maximum speakers per room', input('roomSize', event.maxHeat ?? 6, 'type="number" min="1" max="50"'))}${button('Generate random draw', 'type="button" data-generate', true)}${button('Seed from standings', 'type="button" data-seed', true)}</div><div id="ps-draw-editor">${rooms.length ? drawEditor() : empty('Generate a draw, then review rooms and judge allocations.')}</div></form>`, async fd => {
+    const defaultMethod = round.stage === 'preliminary' ? 'balanced' : 'snake';
+    const suggested = Math.ceil(round.speakerIds.length / (event.maxHeat ?? 6));
+    let report = null;
+    const reportHtml = () => !report ? '' : `<section class="ps-preview" aria-live="polite"><h3>How this draw was made</h3><ul>${report.notes.map(n => `<li>${h(n)}</li>`).join('')}</ul><p>${report.sections} sections of ${[...new Set(report.sizes)].join(' or ')} · ${report.panel} judge(s) per section · seed <code>${h(report.seed)}</code> (enter it again to reproduce this draw).</p>${[...report.sameInstitution, ...report.repeatMeetings, ...report.judgeIssues].length ? `<div class="ps-warning"><p><strong>Could not be avoided with the current field:</strong></p><ul>${[...report.sameInstitution, ...report.repeatMeetings, ...report.judgeIssues].map(x => `<li>${h(x)}</li>`).join('')}</ul></div>` : '<p><strong>No school clashes, repeat meetings or judge conflicts.</strong></p>'}</section>`;
+    const dialog = showDialog('Allocate speakers and judges', `<form class="ps-stack"><div class="ps-grid">${field('Draw method', select('method', [['balanced', 'Balanced (prelims): keep schools apart, avoid repeats'], ['snake', 'Snake by standings (elims / power rounds)']], defaultMethod))}${field('Number of sections', input('sections', suggested, 'type="number" min="1" max="100"'))}${field('Seed (optional, to reproduce a draw)', input('seed', '', 'maxlength="40"'))}</div><div class="ps-actions">${button('Generate draw', 'type="button" data-generate')}</div><div id="ps-draw-report"></div><div id="ps-draw-editor">${rooms.length ? drawEditor() : empty('Generate a draw, then review sections, speaking order and judges before saving.')}</div></form>`, async fd => {
       if (!rooms.length) throw new Error('Generate a draw first.');
       const updated = rooms.map((room, ri) => ({ name: fd.get(`room-${ri}`), judges: fd.getAll(`judges-${ri}`), speakers: round.speakerIds.filter(id => Number(fd.get(`roomFor-${id}`)) === ri).sort((a, b) => Number(fd.get(`order-${a}`)) - Number(fd.get(`order-${b}`))) }));
       for (const room of updated) if (new Set(room.speakers.map(id => fd.get(`order-${id}`))).size !== room.speakers.length) throw new Error('Speaking order numbers must be unique within each room.');
       await mutate('save-draw', { roundId: round.id, rooms: updated });
     });
-    const generate = seeded => {
-      const size = Number(dialog.querySelector('[name="roomSize"]').value);
-      if (!Number.isInteger(size) || size < 1 || size > 50) { alert('Use a room size between 1 and 50.'); return; }
-      const count = Math.ceil(round.speakerIds.length / size);
-      if (judges.length < count) { alert(`Add at least ${count} active judges or increase the room size.`); return; }
-      const ids = [...round.speakerIds];
-      if (seeded) ids.sort((a, b) => (event.standings.findIndex(s => s.speakerId === a) + 1 || Infinity) - (event.standings.findIndex(s => s.speakerId === b) + 1 || Infinity));
-      else for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
-      rooms = Array.from({ length: count }, (_, i) => ({ name: venues[i]?.name || `Room ${i + 1}`, speakers: [], judges: [] }));
-      // Seeded draw puts similarly ranked speakers together; random draw balances room sizes.
-      ids.forEach((id, i) => rooms[seeded ? Math.min(Math.floor(i / size), count - 1) : i % count].speakers.push(id));
-      judges.forEach((j, i) => rooms[i % count].judges.push(j.id));
-      dialog.querySelector('#ps-draw-editor').innerHTML = drawEditor();
+    dialog.querySelector('[data-generate]').onclick = async e => {
+      const btn = e.currentTarget, form = dialog.querySelector('form'); btn.disabled = true;
+      try {
+        const result = await psRequest({ action: 'propose-draw', eventId: current.id, input: { roundId: round.id, method: form.elements.method.value, sections: Number(form.elements.sections.value) || undefined, seed: form.elements.seed.value || undefined, roomNames: venues.map(v => v.name) } });
+        rooms = result.rooms; report = result.report; form.elements.seed.value = report.seed;
+        dialog.querySelector('#ps-draw-report').innerHTML = reportHtml();
+        dialog.querySelector('#ps-draw-editor').innerHTML = drawEditor();
+      } catch (error) { dialog.querySelector('#ps-draw-report').innerHTML = `<p class="ps-error" role="alert">${h(error.message)}</p>`; }
+      finally { btn.disabled = false; }
     };
-    dialog.querySelector('[data-generate]').onclick = () => generate(false);
-    dialog.querySelector('[data-seed]').onclick = () => generate(true);
   }
 
   try {

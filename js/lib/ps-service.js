@@ -8,7 +8,7 @@ export async function psRequest(payload, authenticated = true) {
     headers.Authorization = `Bearer ${session.access_token}`;
   }
   // Every change carries a request key so a retry after a dropped connection is applied once.
-  const READ_ONLY = ['read', 'list', 'public', 'audit', 'plan', 'preview-rules'];
+  const READ_ONLY = ['read', 'list', 'public', 'audit', 'plan', 'preview-rules', 'propose-draw'];
   if (!READ_ONLY.includes(payload.action) && !payload.requestKey) payload = { ...payload, requestKey: crypto.randomUUID() };
   const send = () => fetch('/api/public-speaking', { method: 'POST', headers, body: JSON.stringify(payload) });
   let response;

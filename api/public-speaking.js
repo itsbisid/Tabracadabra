@@ -3,6 +3,7 @@ import { collectBody, sendJson } from '../api-shared/portal-utils.js';
 import { canAdministerTournament, getSessionContext } from '../api-shared/deletion-utils.js';
 import { createEvent, mutateEvent, projectEvent, previewRules, planCapacity } from '../api-shared/ps-engine.js';
 import { assertPSParticipant, hashToken, newToken, tokenKind, LINK_DAYS, SESSION_HOURS } from '../api-shared/ps-access.js';
+import { proposeDraw } from '../api-shared/ps-draw.js';
 import { allowRequest, auditTrail, checkToken, commitEvent, issueToken, linkStatus, listEvents, loadEvent, revokeTokens } from '../api-shared/ps-store.js';
 
 const clientKey = request => String(request.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || request.socket?.remoteAddress || 'unknown';
@@ -82,6 +83,14 @@ export default async function handler(request, response) {
       const token = newToken('portal'), expiresAt = new Date(Date.now() + LINK_DAYS * 86400000).toISOString();
       await issueToken({ eventId: row.id, entryId: person.id, hash: hashToken(token), purpose: 'portal', expiresAt, actor: `admin:${actor.id}`, reason: input.reason });
       return sendJson(response, 200, { token, expiresAt, links: await linkStatus(row.id) });
+    }
+    if (action === 'propose-draw') {
+      // Read-only: suggests sections, speaking order and judges for a draft round. Tab reviews, edits and saves.
+      if (actor.role !== 'admin') fail('Only tournament administrators can draw rounds.', 403);
+      const round = row.state.rounds.find(r => r.id === input.roundId);
+      if (!round) fail('Round not found.', 404);
+      if (round.status !== 'draft') fail('Only draft rounds can be drawn.');
+      return sendJson(response, 200, proposeDraw(row.state, round, input));
     }
     if (action === 'plan') {
       if (actor.role !== 'admin') fail('Only tournament administrators can plan capacity.', 403);

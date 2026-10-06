@@ -88,7 +88,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 - ✅ Private links — random, hash-only storage, link→session exchange, clean URL, rotate/revoke, expiry, last-used status, rate limits, no-store/noindex/no-referrer, copy/WhatsApp share. ❌ Email delivery outbox.
 
 ### Draws & allocation
-- ✅ Random balanced and ranked draws; manual edits; institution + repeat warnings with override reason.
+- ✅ Server draw generator `api-shared/ps-draw.js` (balanced prelims, snake elims, speaking-order balancing, conflict-aware judges, seeded, explained); manual edits; warnings with override reason.
 - ❌ Judge availability, declared personal conflicts as hard blocks, trainees, standby judges.
 - ❌ Lock assignments + targeted regeneration/repair; amendment workflow after publication.
 - ❌ BP/PS clash detection across events (`scheduleConflicts` exists, unused).
@@ -109,7 +109,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 - ❌ Feedback export for speakers.
 
 ### Verification
-- ✅ 28 tests: engine, rules (hand-calculated), PGlite DB, API against real SQL. ✅ Browser walkthrough script (`npm run ps:e2e`). ❌ BP regression tests.
+- ✅ 38 tests (incl. draw): engine, rules (hand-calculated), PGlite DB, API against real SQL. ✅ Browser walkthrough script (`npm run ps:e2e`). ❌ BP regression tests.
 
 ## Build order
 
@@ -130,6 +130,7 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 - 2026-10-06 — Codex work recovered and pushed. Checklist written (this file).
 - 2026-10-06 — Stage 1: ps-v2.sql fixed (it had never run: reserved word, missing commit, jsonb/text loops, ambiguous alias, no delete cleanup) and wired in; ballot revisions; idempotent retries; PGlite tests.
 - 2026-10-06 — Stage 2: configurable rules engine, live preview, capacity planner, penalties, structured feedback, ballot review screen; browser walkthrough + fake Supabase harness.
+- 2026-10-06 — Draw/pairing: researched NSDA/Tabroom/SpeechWire speech sectioning; built ps-draw.js + `propose-draw` API + draw dialog report; 9 draw tests.
 - 2026-10-06 — Stage 3: hashed private links with session exchange, revoke/rotate, rate limits, share controls.
 
 ## In progress

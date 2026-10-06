@@ -132,6 +132,10 @@ export function allocationWarnings(event, round) {
   for (const room of round.rooms) {
     if (room.judges.length !== panel) warnings.push(`${room.name}: ${room.judges.length} judge(s) assigned; the configured panel is ${panel}.`);
     if (room.speakers.length < rules.minHeat) warnings.push(`${room.name}: ${room.speakers.length} speaker(s); the configured minimum is ${rules.minHeat}.`);
+    room.speakers.forEach((a, i) => room.speakers.slice(i + 1).forEach(b => {
+      const sa = find(event.speakers, a, 'Speaker'), sb = find(event.speakers, b, 'Speaker');
+      if (sa.institution && sa.institution.toLowerCase() === sb.institution.toLowerCase()) warnings.push(`${room.name}: ${sa.name} and ${sb.name} are both from ${sa.institution}.`);
+    }));
   }
   for (const room of round.rooms) for (const judgeId of room.judges) {
     const judge = find(event.judges, judgeId, 'Judge');

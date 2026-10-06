@@ -54,13 +54,9 @@ await page.click('button:has-text("Create round")');
 await page.click('#ps-dialog button[type="submit"]');
 await page.click('button:has-text("Generate / edit draw")');
 await page.click('#ps-dialog [data-generate]');
-await page.waitForSelector('#ps-dialog .ps-room');
-const roomCount = await page.locator('#ps-dialog fieldset.ps-room').count();
-for (let ri = 0; ri < roomCount; ri++) {
-  const boxes = page.locator(`#ps-dialog input[name="judges-${ri}"]`);
-  for (let j = 0; j < await boxes.count(); j++) await boxes.nth(j).uncheck();
-  await boxes.nth(ri * 2 % 4).check(); await boxes.nth((ri * 2 + 1) % 4).check();
-}
+await page.waitForSelector('#ps-dialog #ps-draw-report section');
+console.log('DRAW REPORT:', (await page.textContent('#ps-draw-report')).replace(/\s+/g, ' ').slice(0, 400));
+await page.screenshot({ path: `${OUT}/2b-draw.png`, fullPage: true });
 await page.click('#ps-dialog button[type="submit"]');
 await page.waitForSelector('#ps-dialog', { state: 'detached' });
 await page.click('button:has-text("Publish draw")');

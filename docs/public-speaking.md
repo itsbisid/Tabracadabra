@@ -22,7 +22,7 @@ This change does not automatically run production SQL, merge a branch, deploy a 
 - Individual speaker registration by tab, institution/category fields, spreadsheet-column paste, roster export, participant check-in and withdrawal/restoration.
 - Import existing tournament adjudicators or add event-specific judges. Existing venue names are offered in the draw editor.
 - Preliminary, semifinal and final rounds with explicit speaker selection. One unfinished round per event.
-- Random balanced draws or draws grouping similarly ranked speakers; manual room, speaking order and judging panel edits.
+- Server-generated draws (balanced prelims, snaked elims) with speaking-order balancing, conflict-aware judge panels, a reproducible seed and an explanation; manual edits before saving.
 - Institutional and repeated-allocation warnings with a mandatory override reason before publishing. Duplicate participants and judges in a round are rejected.
 - One independent ballot per assigned judge. Weighted criterion scores, unique room ranks, complete drafts, submitted locks, receipts and tab approval. Tab can enter a paper ballot with a reason and reopen an uncompleted round's ballot with a correction reason.
 - All assigned ballots must be approved before round completion. Completed rounds are immutable.
@@ -31,6 +31,23 @@ This change does not automatically run production SQL, merge a branch, deploy a 
 - Speakers can evaluate their assigned judges; judges can evaluate other judges in their room. Evaluations are confidential to tournament admins.
 - Private links expire after 14 days and are stored only as hashes. Generating a replacement or revoking immediately ends the previous link and its sessions. Withdrawn participants cannot use their links.
 - CSV standings and speaker exports; print styling for draws/results; recent change history.
+
+## How draws are made (pairing / sectioning)
+
+Tab clicks **Generate draw** on a draft round; the server (`api-shared/ps-draw.js`) proposes sections, speaking order and judges, explains them, and nothing is saved until tab reviews and saves. Every draw has a seed; entering the same seed reproduces it.
+
+The rules follow published speech-tab practice, mainly the NSDA district tournament manual (sections of 4–7, ideally 6; first avoid same-school sections, then repeat meetings; even out speaking positions; snake eliminations), with Tabroom and SpeechWire documentation for section sizing, school limits, judge conflicts and snaking. It is a heuristic search and is not presented as any body's official algorithm.
+
+- **Section sizes:** sections = ⌈speakers ÷ max per heat⌉ unless tab chooses a number; sizes differ by at most one and must respect the event's min/max.
+- **Balanced draw (prelims):** random start, then swaps that reduce a cost of 1000 per same-institution pair and 100 per pair who have met before, with several restarts.
+- **Snake draw (elims / power rounds):** serpentine by preliminary standings (1 → Section 1, 2 → Section 2 … then back). Only speakers with identical standings are swapped, to separate institutions.
+- **Speaking order:** prelims balance each speaker's average position and give everyone an early (first two) and a late (last two) slot where the field allows; elims order speakers by the reverse of their past positions (whoever has spoken latest overall speaks first).
+- **Judges:** each section gets its configured panel (prelim/final), avoiding judges from a speaker's institution, judges who have already judged a speaker, and uneven workloads. Conflicted judges are kept on standby when spares exist.
+- **Nothing is hidden:** the draw report lists unavoidable same-school pairs, repeat meetings, judge conflicts and judge shortages. Publishing still requires an override reason for any remaining allocation warning (now including same-school sections).
+
+Tested in `tests/ps-draw.test.js`: 60 speakers from 10 schools give 10 clean sections of 6; across three prelims schools stay apart, repeats hit the proven minimum, and 23+ of 24 speakers get both an early and a late slot; spare judges absorb conflicts; snake seeding and reverse elim speaking order.
+
+Sources: [NSDA district tournament operations manual](https://www.speechanddebate.org/wp-content/uploads/District-Tournament-Pilot-Manual-2020-2021-1.pdf), [Tabroom: pairing rounds](https://docs.tabroom.com/quick-start/pairing-rounds), [Tabroom: event settings](https://docs.tabroom.com/Events), [SpeechWire features](https://www.speechwire.com/p-features.php), [UHSAA speech rules](https://www.uhsaa.org/Publications/Handbook/ActivitiesSections/SpeechDebate.pdf), [serpentine system](https://en.wikipedia.org/wiki/Serpentine_system).
 
 ## Scoring rules
 
