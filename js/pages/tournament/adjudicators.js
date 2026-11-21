@@ -4,17 +4,25 @@ import { supabase } from '../../lib/supabase.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml, escapeJsString } from '../../lib/html.js';
 import { isAdmin } from '../../lib/auth-helpers.js';
+import { sendRegistrationApprovedEmail, sendPrivateUrlsToAll, summarizeBulkSend } from '../../lib/email-service.js';
 
 export async function renderAdjudicators(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
   let isUserAdmin = false;
+  let currentJudges = [];
 
   window.tcUpdateJudgeField = async (id, field, currentVal) => {
     if (!isUserAdmin) { alert('Only tournament admins can edit adjudicators.'); return; }
     const newVal = prompt(`Update ${field}:`, currentVal);
     if (newVal !== null && newVal !== currentVal) {
-      await supabase.from('adjudicators').update({ [field]: newVal }).eq('id', id);
+      const value = field === 'email' ? String(newVal).trim().toLowerCase() || null : newVal;
+      if (field === 'email' && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        alert('Enter a valid email address.');
+        return;
+      }
+      const { error } = await supabase.from('adjudicators').update({ [field]: value }).eq('id', id).eq('tournament_id', tournamentId);
+      if (error) { alert(`Could not update adjudicator: ${error.message}`); return; }
       fetchAndRender();
     }
   };
@@ -24,6 +32,34 @@ export async function renderAdjudicators(container) {
     navigator.clipboard.writeText(url).then(() => {
       alert(`Progress URL for judge ${name} copied to clipboard!`);
     });
+  };
+
+  window.tcSendAllJudgeUrls = async (button) => {
+    if (!isUserAdmin) { alert('Only tournament admins can send private URLs.'); return; }
+    const recipients = currentJudges.map(judge => ({
+      name: judge.name,
+      email: judge.email,
+      role: 'adjudicator',
+      dashboardUrl: `${window.location.origin}/#/portal/judge/${judge.id}`
+    }));
+    const withEmail = recipients.filter(r => String(r.email || '').trim()).length;
+    if (!withEmail) { alert('No adjudicators have an email address saved.'); return; }
+    if (!confirm(`Email each adjudicator their own private URL?
+
+${withEmail} of ${recipients.length} adjudicators have an email address.`)) return;
+    const original = button.innerHTML;
+    button.disabled = true;
+    try {
+      const result = await sendPrivateUrlsToAll({
+        tournamentId,
+        recipients,
+        onProgress: (done, total) => { button.textContent = `Sending ${done}/${total}...`; }
+      });
+      alert(summarizeBulkSend(result));
+    } finally {
+      button.disabled = false;
+      button.innerHTML = original;
+    }
   };
 
   window.tcImportCSV = () => {
@@ -65,7 +101,6 @@ export async function renderAdjudicators(container) {
     const safePortalUrl = escapeHtml(portalUrl);
     const emailBody = `Hi ${name || 'there'},\n\nYour registration as an Adjudicator has been approved! You can now access your tournament dashboard to view draws, check-in for rounds, and receive live announcements.\n\nView your dashboard here:\n${portalUrl}\n\nBest regards,\nTournament Tab Core`;
     const emailBodyJs = escapeJsString(emailBody);
-    const mailtoHref = `mailto:${encodeURIComponent(email || '')}?subject=${encodeURIComponent('Tournament Invitation')}&body=${encodeURIComponent(emailBody)}`;
     const modalRoot = document.getElementById('modal-root');
     modalRoot.innerHTML = `
       <div style="position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; z-index:9999;">
@@ -88,12 +123,35 @@ export async function renderAdjudicators(container) {
             </div>
             <div style="display:flex; gap:12px;">
               <button onclick="navigator.clipboard.writeText('${emailBodyJs}').then(() => alert('Copied to clipboard!'))" class="btn btn--primary" style="flex:1; gap:8px;">${icon('copy', 16)} Copy Content</button>
-              <a href="${escapeHtml(mailtoHref)}" class="btn btn--outline" style="flex:1; display:flex; align-items:center; justify-content:center; gap:8px;">${icon('mail', 16)} Send via App</a>
+              <button type="button" onclick="window.tcSendJudgePortalEmail('${escapeJsString(id)}', '${escapeJsString(name)}', '${escapeJsString(email)}', this)" class="btn btn--outline" style="flex:1; display:flex; align-items:center; justify-content:center; gap:8px;">${icon('mail', 16)} Send Email</button>
             </div>
           </div>
         </div>
       </div>
     `;
+  };
+
+  window.tcSendJudgePortalEmail = async (id, name, email, button) => {
+    if (!isUserAdmin) { alert('Only tournament admins can send adjudicator emails.'); return; }
+    if (!email) { alert('Add an email address before sending.'); return; }
+    const original = button?.innerHTML;
+    if (button) { button.disabled = true; button.textContent = 'Sending...'; }
+    try {
+      await sendRegistrationApprovedEmail({
+        to: email,
+        name,
+        role: 'adjudicator',
+        tournamentId,
+        tournamentName: 'Ashesi Pro-Am',
+        dashboardUrl: `${window.location.origin}/#/portal/judge/${id}`,
+        idempotencyKey: `judge-portal:${tournamentId}:${id}:${email}`
+      });
+      alert(`Private judge URL sent to ${email}.`);
+      document.getElementById('modal-root').innerHTML = '';
+    } catch (error) {
+      alert(error.message || 'Email could not be sent.');
+      if (button) { button.disabled = false; button.innerHTML = original; }
+    }
   };
 
   window.tcDeleteAdjudicator = async (id) => {
@@ -150,6 +208,7 @@ export async function renderAdjudicators(container) {
       console.error('Error fetching adjudicators:', error);
       return;
     }
+    currentJudges = data || [];
     renderUI(data || []);
   };
 
@@ -177,7 +236,10 @@ export async function renderAdjudicators(container) {
                     <span onclick="window.tcCopyProgressLink('${j.id}', '${j.name}')" style="color:var(--color-primary); cursor:pointer;" title="Copy Judge Progress Link">${icon('link', 10)}</span>
                     <span onclick="window.tcUpdateJudgeField('${j.id}', 'name', '${j.name}')" style="color:#94a3b8; cursor:pointer;">${icon('pencil', 12)}</span>
                   </div>
-                  <div style="font-size:12px; color:#64748b;">${j.email || 'no email'}</div>
+                  <div style="font-size:12px; color:#64748b; display:flex; align-items:center; gap:6px;">
+                    <span>${escapeHtml(j.email || 'no email')}</span>
+                    ${isUserAdmin ? `<span onclick="window.tcUpdateJudgeField('${escapeJsString(j.id)}', 'email', '${escapeJsString(j.email || '')}')" style="color:#94a3b8; cursor:pointer;" title="Edit email">${icon('pencil', 11)}</span>` : ''}
+                  </div>
                 </td>
                 <td style="padding:16px; color:#64748b;">${j.institution || '-'}</td>
                 <td style="padding:16px;">
@@ -225,6 +287,7 @@ export async function renderAdjudicators(container) {
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px;">
         <div style="display:flex; gap:12px; align-items:center;">
           ${isUserAdmin ? `
+            <button onclick="window.tcSendAllJudgeUrls(this)" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;" title="Email every adjudicator their own private URL">${icon('mail', 18)} Send Private URLs</button>
             <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
             <button onclick="document.getElementById('add-adj-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Adjudicator</button>
           ` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}

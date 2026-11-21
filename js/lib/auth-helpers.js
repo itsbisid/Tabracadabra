@@ -33,7 +33,7 @@ export async function getTournamentRole(tournamentId) {
  * variants ('Director', 'Convenor') actually written by create-tournament,
  * matched case-insensitively so both vocabularies are accepted.
  */
-const ADMIN_ROLE_NAMES = new Set(['tab_director', 'convenor', 'director', 'deputy_convenor']);
+const ADMIN_ROLE_NAMES = new Set(['chief_tab_master', 'tab_director', 'convenor', 'director', 'deputy_convenor']);
 
 function isAdminRole(role) {
   return ADMIN_ROLE_NAMES.has(String(role || '').trim().toLowerCase());

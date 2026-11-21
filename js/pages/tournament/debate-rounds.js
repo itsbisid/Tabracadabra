@@ -45,6 +45,14 @@ export async function renderDebateRounds(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
 
+  container.innerHTML = `
+    <div style="min-height:55vh;display:flex;align-items:center;justify-content:center;padding:32px;color:#64748b;">
+      <div style="text-align:center;">
+        <div style="font-weight:900;color:#172033;margin-bottom:6px;">Loading debate rounds…</div>
+        <div style="font-size:13px;">Fetching draws, rooms, panels, and ballots.</div>
+      </div>
+    </div>`;
+
   const AudioCtor = window.AudioContext || window.webkitAudioContext;
   const audioContext = AudioCtor ? new AudioCtor() : null;
   let timers = {};
@@ -173,6 +181,10 @@ export async function renderDebateRounds(container) {
                 <input name="panel_size" type="number" min="1" max="20" required class="form-input" value="${Math.max(1, Number(existing?.panel_size) || 1)}">
               </div>
             </div>
+            <div class="form-group">
+              <label class="form-label">Scheduled start time</label>
+              <input name="scheduled_start_at" type="datetime-local" class="form-input" value="${existing?.scheduled_start_at ? escapeHtml(new Date(existing.scheduled_start_at).toISOString().slice(0, 16)) : ''}">
+            </div>
             <label style="border:1px solid #dbeafe; background:#f8fbff; border-radius:8px; padding:14px; display:flex; gap:12px; align-items:flex-start; cursor:pointer;">
               <input name="is_blind" type="checkbox" ${roundIsBlind(existing || {}) ? 'checked' : ''} style="margin-top:3px; accent-color:#0044b3;">
               <span>
@@ -254,7 +266,8 @@ export async function renderDebateRounds(container) {
       results_released: fd.get('results_released') === 'on',
       panel_size: panelSize,
       room_names: roomNames,
-      motion_text: String(fd.get('motion_text') || '').trim() || null
+      motion_text: String(fd.get('motion_text') || '').trim() || null,
+      scheduled_start_at: fd.get('scheduled_start_at') ? new Date(String(fd.get('scheduled_start_at'))).toISOString() : null
     };
 
     const submit = form.querySelector('button[type="submit"]');
@@ -276,6 +289,132 @@ export async function renderDebateRounds(container) {
         submit.innerHTML = originalText;
       }
     }
+    return false;
+  };
+
+  window.tcOpenGrandFinalModal = () => {
+    if (!isUserAdmin) { alert('Only tournament admins can create the Grand Final.'); return; }
+    if (currentRounds.some(round => String(round.name || '').toLowerCase() === 'grand final')) {
+      alert('A Grand Final already exists. Edit its room, teams, and panel instead of creating a duplicate.');
+      return;
+    }
+    const activeTeams = currentTeams.filter(team => (team.status || 'Active') !== 'Inactive');
+    const activeJudges = currentAdjudicators.filter(judge => (judge.status || 'Active') === 'Active');
+    if (activeTeams.length < 4) { alert('At least four active teams are required.'); return; }
+    const teamOptions = activeTeams.map(team => `<option value="${escapeHtml(team.id)}">${escapeHtml(team.name || [team.speaker1_name, team.speaker2_name].filter(Boolean).join(' × ') || 'Unnamed team')}</option>`).join('');
+    const chairOptions = activeJudges.filter(judge => !judge.is_trainee).map(judge => `<option value="${escapeHtml(judge.id)}">${escapeHtml(judge.name || 'Unnamed adjudicator')}</option>`).join('');
+    const nextRoundNumber = currentRounds.length ? Math.max(...currentRounds.map(round => Number(round.round_num) || 0)) + 1 : 1;
+
+    document.getElementById('modal-root').innerHTML = `
+      <div style="position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;">
+        <div style="background:white;border-radius:12px;width:min(820px,100%);max-height:calc(100vh - 40px);overflow:auto;box-shadow:0 24px 60px rgba(15,23,42,.3);">
+          <div style="padding:20px 24px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:16px;"><div><h2 style="font-size:19px;font-weight:900;margin:0;">Create Grand Final</h2><p style="font-size:13px;color:#64748b;margin:4px 0 0;">One room with manually selected teams, positions, Chair, and panel.</p></div><button type="button" onclick="document.getElementById('modal-root').innerHTML=''" style="border:0;background:transparent;cursor:pointer;">${icon('x',20)}</button></div>
+          <form onsubmit="return window.tcSaveGrandFinal(event)" style="padding:24px;display:grid;gap:18px;">
+            <input type="hidden" name="round_num" value="${nextRoundNumber}">
+            <div class="form-group"><label class="form-label">Grand Final room</label><input name="room" class="form-input" list="grand-final-rooms" required placeholder="Select or type one room"><datalist id="grand-final-rooms">${currentVenues.map(venue => `<option value="${escapeHtml(venue.name || '')}">`).join('')}</datalist></div>
+            <div><div class="form-label" style="margin-bottom:9px;">Team positions</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">${['OG','OO','CG','CO'].map(position => `<label class="form-group"><span class="form-label">${position}</span><select name="team_${position}" class="form-input form-select" required><option value="">Select team</option>${teamOptions}</select></label>`).join('')}</div></div>
+            <div class="form-group"><label class="form-label">Chair</label><select name="chair_id" class="form-input form-select" required><option value="">Select Chair</option>${chairOptions}</select></div>
+            <div><div class="form-label" style="margin-bottom:9px;">Panel adjudicators</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">${activeJudges.map(judge => `<label style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;display:flex;gap:9px;align-items:center;"><input type="checkbox" name="panel_judge" value="${escapeHtml(judge.id)}"><span><strong style="display:block;font-size:13px;">${escapeHtml(judge.name || 'Unnamed adjudicator')}</strong><small style="color:#64748b;">${judge.is_trainee ? 'Trainee' : 'Wing'}</small></span></label>`).join('')}</div></div>
+            <div class="form-group"><label class="form-label">Motion (optional)</label><textarea name="motion_text" rows="3" class="form-input form-textarea"></textarea></div>
+            <div style="display:flex;justify-content:flex-end;gap:10px;"><button type="button" class="btn btn--outline" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button><button type="submit" class="btn btn--primary">${icon('award',16)} Create Grand Final</button></div>
+          </form>
+        </div>
+      </div>`;
+  };
+
+  window.tcSaveGrandFinal = async event => {
+    event.preventDefault();
+    if (!isUserAdmin) return false;
+    const form = event.target;
+    const fd = new FormData(form);
+    const teamIds = ['OG','OO','CG','CO'].map(position => String(fd.get(`team_${position}`) || ''));
+    if (new Set(teamIds).size !== 4 || teamIds.some(id => !id)) { alert('Select four different teams—one for each position.'); return false; }
+    const chairId = String(fd.get('chair_id') || '');
+    const panelIds = fd.getAll('panel_judge').map(String).filter(id => id && id !== chairId);
+    const room = String(fd.get('room') || '').trim();
+    const submit = event.submitter || form.querySelector('button[type="submit"]');
+    if (submit) { submit.disabled = true; submit.innerHTML = 'Creating...'; }
+
+    let roundId = null;
+    let pairingId = null;
+    try {
+      const roundPayload = { tournament_id: tournamentId, round_num: Number(fd.get('round_num')), name: 'Grand Final', type: 'ELIM', status: 'Draft', is_blind: false, results_released: false, panel_size: 1 + panelIds.length, room_names: [room], motion_text: String(fd.get('motion_text') || '').trim() || null };
+      const { data: round, error: roundError } = await supabase.from('rounds').insert(roundPayload).select().single();
+      if (roundError) throw roundError;
+      roundId = round.id;
+      const pairingPayload = { tournament_id: tournamentId, round_id: round.id, room_label: room, og_team_id: teamIds[0], oo_team_id: teamIds[1], cg_team_id: teamIds[2], co_team_id: teamIds[3], chair_id: chairId, jitsi_link: `https://meet.jit.si/Tabra_${tournamentId.substring(0,8)}_GrandFinal` };
+      const { data: pairing, error: pairingError } = await supabase.from('draw_pairings').insert(pairingPayload).select().single();
+      if (pairingError) throw pairingError;
+      pairingId = pairing.id;
+      const allocations = panelIds.map(id => { const judge = currentJudgeMap.get(id); return { pairing_id: pairing.id, adjudicator_id: id, role: judge?.is_trainee ? 'TRAINEE' : 'WING' }; });
+      if (allocations.length) { const { error } = await supabase.from('adjudicator_allocations').upsert(allocations, { onConflict: 'pairing_id,adjudicator_id' }); if (error) throw error; }
+      document.getElementById('modal-root').innerHTML = '';
+      await fetchAndRender();
+      alert('Grand Final created. Review it, then release the speaker and judge draws when ready.');
+    } catch (error) {
+      if (pairingId) await supabase.from('draw_pairings').delete().eq('id', pairingId);
+      if (roundId) await supabase.from('rounds').delete().eq('id', roundId);
+      alert(error.message || 'Could not create the Grand Final.');
+      if (submit) { submit.disabled = false; submit.innerHTML = 'Create Grand Final'; }
+    }
+    return false;
+  };
+
+  const isFinalRound = round => String(round?.type || '').toUpperCase() === 'ELIM' || /final/i.test(String(round?.name || ''));
+
+  window.tcOpenFinalWinnersModal = roundId => {
+    if (!isUserAdmin) { alert('Only tournament admins can record the winners.'); return; }
+    const round = currentRounds.find(item => item.id === roundId);
+    if (!round || !isFinalRound(round)) { alert('This control is only available for a final round.'); return; }
+
+    const teamIds = [...new Set((round.draw_pairings || []).flatMap(pairing => [pairing.og_team_id, pairing.oo_team_id, pairing.cg_team_id, pairing.co_team_id]).filter(Boolean))];
+    const judgeIds = [...new Set((round.draw_pairings || []).flatMap(pairing => [
+      pairing.chair_id,
+      ...(pairing.adjudicator_allocations || []).map(allocation => allocation.adjudicator_id)
+    ]).filter(Boolean))];
+    const teamOptions = teamIds.map(id => {
+      const team = currentTeamMap.get(id);
+      const label = team?.name || [team?.speaker1_name, team?.speaker2_name].filter(Boolean).join(' × ') || 'Unnamed team';
+      return `<option value="${escapeHtml(id)}" ${round.winner_team_id === id ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('');
+    const judgeOptions = judgeIds.map(id => {
+      const judge = currentJudgeMap.get(id);
+      const isChair = (round.draw_pairings || []).some(pairing => pairing.chair_id === id);
+      return `<option value="${escapeHtml(id)}" ${round.winning_adjudicator_id === id ? 'selected' : ''}>${escapeHtml(judge?.name || 'Unnamed adjudicator')} (${isChair ? 'Chair' : 'Panel'})</option>`;
+    }).join('');
+
+    document.getElementById('modal-root').innerHTML = `
+      <div style="position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;">
+        <div style="background:white;border-radius:14px;width:min(560px,100%);box-shadow:0 24px 60px rgba(15,23,42,.3);overflow:hidden;">
+          <div style="padding:20px 24px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:16px;"><div><h2 style="font-size:19px;font-weight:900;margin:0;">Record Pro-Am Winners</h2><p style="font-size:13px;color:#64748b;margin:4px 0 0;">Choose from the teams and adjudicators assigned to ${escapeHtml(round.name || 'the final')}.</p></div><button type="button" onclick="document.getElementById('modal-root').innerHTML=''" style="border:0;background:transparent;cursor:pointer;">${icon('x',20)}</button></div>
+          <form onsubmit="return window.tcSaveFinalWinners(event, '${escapeJsString(round.id)}')" style="padding:24px;display:grid;gap:18px;">
+            <label class="form-group"><span class="form-label">Pro-Am winning team</span><select name="winner_team_id" class="form-input form-select" required><option value="">Select winning team</option>${teamOptions}</select></label>
+            <label class="form-group"><span class="form-label">Winning adjudicator</span><select name="winning_adjudicator_id" class="form-input form-select" required><option value="">Select winning judge</option>${judgeOptions}</select></label>
+            ${!teamOptions || !judgeOptions ? '<div style="padding:11px;border-radius:8px;background:#fff7ed;color:#9a3412;font-size:13px;">Assign the final teams and adjudicators before recording winners.</div>' : ''}
+            <div style="display:flex;justify-content:flex-end;gap:10px;"><button type="button" class="btn btn--outline" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button><button type="submit" class="btn btn--primary" ${!teamOptions || !judgeOptions ? 'disabled' : ''}>${icon('award',16)} Save Winners</button></div>
+          </form>
+        </div>
+      </div>`;
+  };
+
+  window.tcSaveFinalWinners = async (event, roundId) => {
+    event.preventDefault();
+    if (!isUserAdmin) return false;
+    const form = event.target;
+    const fd = new FormData(form);
+    const winnerTeamId = String(fd.get('winner_team_id') || '');
+    const winningAdjudicatorId = String(fd.get('winning_adjudicator_id') || '');
+    const submit = event.submitter || form.querySelector('button[type="submit"]');
+    if (submit) { submit.disabled = true; submit.innerHTML = 'Saving...'; }
+    const { error } = await supabase.from('rounds').update({ winner_team_id: winnerTeamId, winning_adjudicator_id: winningAdjudicatorId }).eq('id', roundId);
+    if (error) {
+      alert(error.message || 'Could not save the winners.');
+      if (submit) { submit.disabled = false; submit.innerHTML = 'Save Winners'; }
+      return false;
+    }
+    document.getElementById('modal-root').innerHTML = '';
+    await fetchAndRender();
+    alert('Pro-Am winners saved.');
     return false;
   };
 
@@ -316,15 +455,30 @@ export async function renderDebateRounds(container) {
     }
   };
 
-  window.tcUnlockBallot = async (ballotId) => {
+  window.tcUnlockBallot = async (pairingId) => {
     if (!isUserAdmin) {
       alert('Only tournament admins can unlock ballots.');
       return;
     }
+    const context = getPairingContext(pairingId);
+    if (String(context?.round?.status || '').toLowerCase() === 'completed') {
+      alert('This round is completed. Its ballot points are locked until the tournament is marked completed.');
+      return;
+    }
     if (confirm('Unlock this ballot for editing? This will revert it from LOCKED to DRAFT.')) {
-      const { error } = await supabase.from('ballots').update({ status: 'DRAFT' }).eq('id', ballotId);
+      const { error } = await supabase.from('ballots').update({ status: 'DRAFT' }).eq('pairing_id', pairingId);
       if (error) alert(error.message);
-      else fetchAndRender();
+      else {
+        const pairing = currentRounds
+          .flatMap(round => round.draw_pairings || [])
+          .find(item => item.id === pairingId);
+        if (pairing) {
+          pairing.ballots = (pairing.ballots || []).map(ballot => ({ ...ballot, status: 'DRAFT' }));
+          window.tcEnterBallot(pairingId);
+        } else {
+          fetchAndRender();
+        }
+      }
     }
   };
 
@@ -391,6 +545,24 @@ export async function renderDebateRounds(container) {
     }
   };
 
+  window.tcSetRoundMotion = async roundId => {
+    if (!isUserAdmin) {
+      alert('Only tournament admins can set motions.');
+      return;
+    }
+    const existing = currentRounds.find(round => round.id === roundId);
+    const entered = prompt('Enter the motion for this round:', existing?.motion_text || '');
+    if (entered === null) return;
+    const motionText = entered.trim();
+    if (!motionText) {
+      alert('Motion text cannot be empty.');
+      return;
+    }
+    const { error } = await supabase.from('rounds').update({ motion_text: motionText }).eq('id', roundId);
+    if (error) alert(error.message);
+    else fetchAndRender();
+  };
+
   const setupTimers = (rounds) => {
     Object.values(timers).forEach(clearInterval);
     timers = {};
@@ -427,7 +599,20 @@ export async function renderDebateRounds(container) {
     }
 
     const round = currentRounds.find(item => item.id === roundId);
-    if (round?.draw_pairings?.length && !confirm('This round already has pairings. Generate another set anyway?')) return;
+    const existingPairings = round?.draw_pairings || [];
+    const isRegeneration = existingPairings.length > 0;
+    if (isRegeneration) {
+      const hasBallots = existingPairings.some(pairing => (pairing.ballots || []).length > 0);
+      if (hasBallots) {
+        alert('This draw already has ballot data and cannot be regenerated safely. Edit rooms, panels, or ballots individually instead.');
+        return;
+      }
+      const released = Boolean(round?.speaker_draw_released_at || round?.judge_draw_released_at);
+      const warning = released
+        ? 'This draw is already released. Regenerating it will immediately change assignments on private URLs. Continue?'
+        : 'Replace the current draft pairings with a newly generated draw?';
+      if (!confirm(warning)) return;
+    }
 
     const btn = document.activeElement;
     const originalText = btn?.innerHTML;
@@ -444,6 +629,22 @@ export async function renderDebateRounds(container) {
         Math.max(1, Number(round?.panel_size) || 1),
         round?.room_names || []
       );
+
+      if (isRegeneration) {
+        const pairingIds = existingPairings.map(pairing => pairing.id);
+        const { error: allocationDeleteError } = await supabase
+          .from('adjudicator_allocations')
+          .delete()
+          .in('pairing_id', pairingIds);
+        if (allocationDeleteError) throw allocationDeleteError;
+
+        const { error: pairingDeleteError } = await supabase
+          .from('draw_pairings')
+          .delete()
+          .in('id', pairingIds);
+        if (pairingDeleteError) throw pairingDeleteError;
+      }
+
       const { data: insertedPairings, error: pError } = await supabase.from('draw_pairings').insert(pairings).select();
       if (pError) throw pError;
 
@@ -458,12 +659,14 @@ export async function renderDebateRounds(container) {
       });
 
       if (finalAllocations.length) {
-        const { error: aError } = await supabase.from('adjudicator_allocations').insert(finalAllocations);
+        const { error: aError } = await supabase.from('adjudicator_allocations').upsert(finalAllocations, {
+          onConflict: 'pairing_id,adjudicator_id'
+        });
         if (aError) throw aError;
       }
 
       await fetchAndRender();
-      alert('Pairings generated.');
+      alert(isRegeneration ? 'Pairings regenerated.' : 'Pairings generated.');
     } catch (err) {
       alert(err.message);
     }
@@ -474,14 +677,20 @@ export async function renderDebateRounds(container) {
     }
   };
 
-  window.tcReleaseDraw = async (roundId) => {
+  window.tcReleaseDraw = async (roundId, audience) => {
     if (!isUserAdmin) {
       alert('Only tournament admins can publish rounds.');
       return;
     }
-    if (!confirm('Publish this round draw to participants and adjudicators? Blind rounds will still hide team identities from adjudicators.')) return;
+    const isJudgeDraw = audience === 'judges';
+    const audienceLabel = isJudgeDraw ? 'judges' : 'speakers';
+    if (!confirm(`Release this round draw to ${audienceLabel}?`)) return;
 
-    const { error } = await supabase.from('rounds').update({ status: 'Released' }).eq('id', roundId);
+    const releasedAtField = isJudgeDraw ? 'judge_draw_released_at' : 'speaker_draw_released_at';
+    const { error } = await supabase.from('rounds').update({
+      status: 'Released',
+      [releasedAtField]: new Date().toISOString()
+    }).eq('id', roundId);
     if (error) alert(error.message);
     else {
       const { data: round } = await supabase.from('rounds').select('name, round_num').eq('id', roundId).single();
@@ -490,11 +699,11 @@ export async function renderDebateRounds(container) {
         sendTournamentPush({
           authorization: `Bearer ${session.access_token}`,
           tournamentId,
-          title: `${round?.name || `Round ${round?.round_num || ''}`} draw released`,
-          body: 'Your draw is now available in your private portal.'
+          title: `${round?.name || `Round ${round?.round_num || ''}`} ${isJudgeDraw ? 'judge' : 'speaker'} draw released`,
+          body: `The ${isJudgeDraw ? 'judge' : 'speaker'} draw is now available in private portals.`
         }).catch(pushError => console.warn('Push notification failed:', pushError));
       }
-      alert('Round published.');
+      alert(`${isJudgeDraw ? 'Judge' : 'Speaker'} draw released.`);
       fetchAndRender();
     }
   };
@@ -511,7 +720,12 @@ export async function renderDebateRounds(container) {
   };
 
   window.tcEnterBallot = (pairingId) => {
-    const pairing = currentRounds.flatMap(round => round.draw_pairings || []).find(item => item.id === pairingId);
+    const context = getPairingContext(pairingId);
+    if (String(context?.round?.status || '').toLowerCase() === 'completed') {
+      alert('This round is completed. Ballot points are locked until the tournament ends.');
+      return;
+    }
+    const pairing = context?.pairing;
     if (pairing) {
       showBallotModal(pairing, () => fetchAndRender(), { teamMap: currentTeamMap });
     }
@@ -652,6 +866,12 @@ export async function renderDebateRounds(container) {
   window.tcSavePairingPanel = async (event, pairingId) => {
     event.preventDefault();
     if (!isUserAdmin) return false;
+    const saveButton = event.submitter || event.target.querySelector('button[type="submit"]');
+    if (saveButton?.disabled) return false;
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.innerHTML = 'Saving...';
+    }
     const fd = new FormData(event.target);
     const selected = currentAdjudicators
       .filter(judge => fd.get(`judge-${judge.id}`) === 'on')
@@ -659,34 +879,42 @@ export async function renderDebateRounds(container) {
     const chairs = selected.filter(item => item.role === 'CHAIR');
     if (selected.length === 0) {
       alert('Select at least one adjudicator.');
+      if (saveButton) { saveButton.disabled = false; saveButton.innerHTML = 'Save panel'; }
       return false;
     }
     if (chairs.length !== 1) {
       alert('Each debate panel must have exactly one chair.');
+      if (saveButton) { saveButton.disabled = false; saveButton.innerHTML = 'Save panel'; }
       return false;
     }
     if (chairs[0].judge.is_trainee) {
       alert('A trainee cannot be assigned as the panel chair.');
+      if (saveButton) { saveButton.disabled = false; saveButton.innerHTML = 'Save panel'; }
       return false;
     }
 
     const { error: deleteError } = await supabase.from('adjudicator_allocations').delete().eq('pairing_id', pairingId);
     if (deleteError) {
       alert(deleteError.message);
+      if (saveButton) { saveButton.disabled = false; saveButton.innerHTML = 'Save panel'; }
       return false;
     }
     const { error: pairingError } = await supabase.from('draw_pairings').update({ chair_id: chairs[0].judge.id }).eq('id', pairingId);
     if (pairingError) {
       alert(pairingError.message);
+      if (saveButton) { saveButton.disabled = false; saveButton.innerHTML = 'Save panel'; }
       return false;
     }
     const allocations = selected
       .filter(item => item.role !== 'CHAIR')
       .map(item => ({ pairing_id: pairingId, adjudicator_id: item.judge.id, role: item.role }));
     if (allocations.length) {
-      const { error } = await supabase.from('adjudicator_allocations').insert(allocations);
+      const { error } = await supabase.from('adjudicator_allocations').upsert(allocations, {
+        onConflict: 'pairing_id,adjudicator_id'
+      });
       if (error) {
         alert(error.message);
+        if (saveButton) { saveButton.disabled = false; saveButton.innerHTML = 'Save panel'; }
         return false;
       }
     }
@@ -717,6 +945,7 @@ export async function renderDebateRounds(container) {
   };
 
   const renderPairing = (pairing, round) => {
+    const ballotLockedByRound = String(round?.status || '').toLowerCase() === 'completed';
     const teamPositions = [
       ['OG', pairing.og_team_id],
       ['OO', pairing.oo_team_id],
@@ -739,9 +968,11 @@ export async function renderDebateRounds(container) {
             ${isUserAdmin ? `<button onclick="window.tcOpenRoomModal('${escapeJsString(pairing.id)}')" class="btn btn--outline btn--sm">${icon('mapPin', 14)} Room</button>` : ''}
             ${isUserAdmin ? `<button onclick="window.tcOpenPanelModal('${escapeJsString(pairing.id)}')" class="btn btn--outline btn--sm">${icon('users', 14)} Panel</button>` : ''}
             ${pairing.ballots?.length > 0 ? `<span style="color:#047857; font-size:12px; font-weight:800;">${icon('check', 12)} Confirmed</span>` : ''}
-            ${isUserAdmin ? (pairing.ballots?.length > 0
-              ? `<button onclick="window.tcUnlockBallot('${escapeJsString(pairing.ballots[0].id)}')" class="btn btn--outline btn--sm" style="color:#ef4444; border-color:#fecaca;">${icon('unlock', 14)} Unlock</button>`
-              : `<button onclick="window.tcEnterBallot('${escapeJsString(pairing.id)}')" class="btn btn--outline btn--sm">${icon('fileText', 14)} Ballot</button>`) : ''}
+            ${isUserAdmin ? (ballotLockedByRound
+              ? `<button class="btn btn--outline btn--sm" type="button" disabled style="color:#94a3b8;background:#f1f5f9;border-color:#cbd5e1;cursor:not-allowed;opacity:.8;">${icon('lock', 14)} Locked — no changes</button>`
+              : (pairing.ballots?.length > 0
+                ? `<button onclick="window.tcUnlockBallot('${escapeJsString(pairing.id)}')" class="btn btn--outline btn--sm" style="color:#ef4444; border-color:#fecaca;">${icon('unlock', 14)} Unlock & edit</button>`
+                : `<button onclick="window.tcEnterBallot('${escapeJsString(pairing.id)}')" class="btn btn--outline btn--sm">${icon('fileText', 14)} Ballot</button>`)) : ''}
             ${pairing.jitsi_link ? `<a href="${escapeHtml(pairing.jitsi_link)}" target="_blank" class="btn btn--secondary btn--sm" style="display:inline-flex; align-items:center; gap:6px;">${icon('mic', 14)} Join</a>` : ''}
           </div>
         </div>
@@ -776,7 +1007,7 @@ export async function renderDebateRounds(container) {
           <div style="font-size:14px; color:var(--color-text-muted);">Create, edit, publish, blind, and complete tournament rounds.</div>
         </div>
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:flex-end;">
-          ${isUserAdmin ? `<button onclick="window.tcOpenRoundModal()" class="btn btn--primary" style="gap:8px;">${icon('plus', 16)} Add Round</button>` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}
+          ${isUserAdmin ? `<button onclick="window.tcOpenGrandFinalModal()" class="btn btn--secondary" style="gap:8px;">${icon('award', 16)} Create Grand Final</button><button onclick="window.tcOpenRoundModal()" class="btn btn--primary" style="gap:8px;">${icon('plus', 16)} Add Round</button>` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}
         </div>
       </div>
 
@@ -810,6 +1041,7 @@ export async function renderDebateRounds(container) {
                   </div>
                 </div>
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                  ${isUserAdmin ? `<button onclick="window.tcSetRoundMotion('${escapeJsString(round.id)}')" class="btn btn--outline btn--sm">${icon('fileText', 14)} ${round.motion_text ? 'Edit Motion' : 'Add Motion'}</button>` : ''}
                   ${round.motion_released_at ? `
                     <div style="background:white; border:1px solid #e2e8f0; padding:6px 10px; border-radius:8px; display:flex; align-items:center; gap:8px; font-size:12px;">
                       ${icon('clock', 14)} <span id="timer-${round.id}" style="font-family:monospace; font-weight:800;">--:--</span>
@@ -817,15 +1049,18 @@ export async function renderDebateRounds(container) {
                   ` : (isUserAdmin ? `<button onclick="window.tcReleaseMotion('${escapeJsString(round.id)}')" class="btn btn--outline btn--sm">${icon('megaphone', 14)} Release Motion</button>` : '')}
                   ${isUserAdmin ? `
                     <button onclick="window.tcOpenRoundModal('${escapeJsString(round.id)}')" class="btn btn--outline btn--sm">${icon('pencil', 14)} Edit</button>
+                    ${isFinalRound(round) ? `<button onclick="window.tcOpenFinalWinnersModal('${escapeJsString(round.id)}')" class="btn btn--outline btn--sm" style="color:#92400e;border-color:#fbbf24;background:#fffbeb;">${icon('award', 14)} ${round.winner_team_id || round.winning_adjudicator_id ? 'Edit Winners' : 'Record Winners'}</button>` : ''}
                     <button onclick="window.tcToggleRoundBlind('${escapeJsString(round.id)}', ${roundIsBlind(round) ? 'false' : 'true'})" class="btn btn--outline btn--sm">${roundIsBlind(round) ? icon('eye', 14) + ' Make Open' : icon('eyeOff', 14) + ' Make Blind'}</button>
                     ${roundIsBlind(round) ? `<button onclick="window.tcToggleRoundResults('${escapeJsString(round.id)}', ${round.results_released ? 'false' : 'true'})" class="btn btn--outline btn--sm">${round.results_released ? icon('eyeOff', 14) + ' Withhold Results' : icon('eye', 14) + ' Release Results'}</button>` : ''}
-                    ${round.draw_pairings?.length ? '' : `<button onclick="window.tcGeneratePairings('${escapeJsString(round.id)}', ${Number(round.round_num) || 1})" class="btn btn--secondary btn--sm">${icon('zap', 14)} Generate Pairings</button>`}
-                    ${round.draw_pairings?.length && String(round.status || 'Draft') === 'Draft' ? `<button onclick="window.tcReleaseDraw('${escapeJsString(round.id)}')" class="btn btn--sm" style="background:#10b981; color:white;">${icon('send', 14)} Publish</button>` : ''}
+                    <button onclick="window.tcGeneratePairings('${escapeJsString(round.id)}', ${Number(round.round_num) || 1})" class="btn btn--secondary btn--sm">${icon('zap', 14)} ${round.draw_pairings?.length ? 'Regenerate Pairings' : 'Generate Pairings'}</button>
+                    ${round.draw_pairings?.length && !round.speaker_draw_released_at ? `<button onclick="window.tcReleaseDraw('${escapeJsString(round.id)}', 'speakers')" class="btn btn--sm" style="background:#10b981; color:white;">${icon('send', 14)} Release Speaker Draw</button>` : ''}
+                    ${round.draw_pairings?.length && !round.judge_draw_released_at ? `<button onclick="window.tcReleaseDraw('${escapeJsString(round.id)}', 'judges')" class="btn btn--sm" style="background:#0f2b5b; color:white;">${icon('gavel', 14)} Release Judge Draw</button>` : ''}
                     ${String(round.status || '').toLowerCase() !== 'completed' ? `<button onclick="window.tcCompleteRound('${escapeJsString(round.id)}')" class="btn btn--outline btn--sm">${icon('checkCircle', 14)} Complete</button>` : ''}
                   ` : ''}
                 </div>
               </div>
               <div style="padding:18px; display:grid; gap:14px;">
+                ${isFinalRound(round) && (round.winner_team_id || round.winning_adjudicator_id) ? `<div style="border:1px solid #fde68a;background:linear-gradient(135deg,#fffbeb,#fff7ed);border-radius:10px;padding:14px;display:flex;gap:24px;flex-wrap:wrap;align-items:center;"><strong style="color:#92400e;">${icon('award',16)} Pro-Am Winners</strong>${round.winner_team_id ? `<span style="font-size:13px;"><b>Team:</b> ${escapeHtml(currentTeamMap.get(round.winner_team_id)?.name || [currentTeamMap.get(round.winner_team_id)?.speaker1_name, currentTeamMap.get(round.winner_team_id)?.speaker2_name].filter(Boolean).join(' × ') || 'Unknown team')}</span>` : ''}${round.winning_adjudicator_id ? `<span style="font-size:13px;"><b>Winning judge:</b> ${escapeHtml(currentJudgeMap.get(round.winning_adjudicator_id)?.name || 'Unknown adjudicator')}</span>` : ''}</div>` : ''}
                 ${round.motion_text ? `<div style="border:1px solid #e2e8f0; background:#fff; border-radius:8px; padding:12px; font-size:13px;"><strong>Motion:</strong> ${escapeHtml(round.motion_text)}</div>` : ''}
                 ${round.draw_pairings?.length ? round.draw_pairings.map(pairing => renderPairing(pairing, round)).join('') : `
                   <div style="padding:18px; border:1px dashed #cbd5e1; border-radius:10px; color:#64748b; font-size:14px;">
@@ -843,5 +1078,5 @@ export async function renderDebateRounds(container) {
     renderAppLayout(container, '/tournament/debate-rounds', 'Debate Rounds', '', content);
   };
 
-  fetchAndRender();
+  await fetchAndRender();
 }

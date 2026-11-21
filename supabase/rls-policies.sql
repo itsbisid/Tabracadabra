@@ -42,7 +42,7 @@ as $$
     select 1 from public.tournament_memberships m
     where m.tournament_id::text = tid
       and m.user_id = auth.uid()
-      and lower(coalesce(m.role, '')) in ('director', 'tab_director', 'convenor', 'deputy_convenor')
+      and lower(replace(coalesce(m.role, ''), ' ', '_')) in ('chief_tab_master', 'director', 'tab_director', 'convenor', 'deputy_convenor')
   );
 $$;
 

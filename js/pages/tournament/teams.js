@@ -5,6 +5,7 @@ import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml, escapeJsString } from '../../lib/html.js';
 import { DEFAULT_TEAM_EMOJI, getTeamEmoji, teamLabelHtml } from '../../lib/team-display.js';
 import { isAdmin } from '../../lib/auth-helpers.js';
+import { sendPrivateUrlsToAll, summarizeBulkSend } from '../../lib/email-service.js';
 
 const EMOJI_CATEGORIES = {
   Default: [DEFAULT_TEAM_EMOJI],
@@ -38,6 +39,9 @@ export async function renderTeams(container) {
   const tournamentId = requireActiveTournamentId();
   if (!tournamentId) return;
   let isUserAdmin = false;
+  let currentTeams = [];
+
+  const normalizeEmail = value => String(value || '').trim().toLowerCase();
 
   async function insertTeamsWithEmoji(rows) {
     let { error } = await supabase.from('teams').insert(rows);
@@ -72,6 +76,188 @@ export async function renderTeams(container) {
     navigator.clipboard.writeText(url).then(() => {
       alert(`Progress URL for ${name} copied to clipboard!`);
     });
+  };
+
+  window.tcOpenTeamEditor = (id) => {
+    if (!isUserAdmin) { alert('Only tournament admins can edit team members.'); return; }
+    const team = currentTeams.find(item => item.id === id);
+    if (!team) { alert('That team could not be found. Refresh and try again.'); return; }
+    const modalRoot = document.getElementById('modal-root');
+    modalRoot.innerHTML = `
+      <div style="position:fixed; inset:0; background:rgba(15,23,42,.48); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:white; width:min(620px,100%); max-height:90vh; overflow:auto; border-radius:12px; box-shadow:0 24px 60px rgba(15,23,42,.25);">
+          <div style="padding:20px 24px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; gap:16px;">
+            <div><h3 style="margin:0; font-size:18px;">Edit team and partners</h3><p style="margin:5px 0 0; color:#64748b; font-size:13px;">Update either participant, their email, or replace a partner.</p></div>
+            <button type="button" aria-label="Close" onclick="document.getElementById('modal-root').innerHTML=''" style="border:0;background:transparent;cursor:pointer;color:#64748b;">${icon('x', 20)}</button>
+          </div>
+          <form onsubmit="return window.tcSaveTeamEdits(event, '${escapeHtml(escapeJsString(id))}')" style="padding:24px; display:grid; gap:16px;">
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Team name</label><input name="name" required class="form-input" value="${escapeHtml(team.name || '')}"></div>
+              <div class="form-group"><label class="form-label">Institution</label><input name="institution" class="form-input" value="${escapeHtml(team.institution || '')}"></div>
+            </div>
+            <div style="padding:16px; border:1px solid #e2e8f0; border-radius:10px; display:grid; gap:12px;">
+              <strong>Speaker 1</strong>
+              <div class="grid-2">
+                <div class="form-group"><label class="form-label">Name</label><input name="speaker1_name" required class="form-input" value="${escapeHtml(team.speaker1_name || '')}"></div>
+                <div class="form-group"><label class="form-label">Email</label><input name="speaker1_email" type="email" class="form-input" value="${escapeHtml(team.speaker1_email || '')}" placeholder="speaker@example.com"></div>
+              </div>
+            </div>
+            <div style="padding:16px; border:1px solid #e2e8f0; border-radius:10px; display:grid; gap:12px;">
+              <strong>Speaker 2 / partner</strong>
+              <div class="grid-2">
+                <div class="form-group"><label class="form-label">Name</label><input name="speaker2_name" required class="form-input" value="${escapeHtml(team.speaker2_name || '')}"></div>
+                <div class="form-group"><label class="form-label">Email</label><input name="speaker2_email" type="email" class="form-input" value="${escapeHtml(team.speaker2_email || '')}" placeholder="speaker@example.com"></div>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:12px;">
+              <button type="button" class="btn btn--outline" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+              <button type="submit" class="btn btn--primary">Save changes</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+  };
+
+  window.tcSaveTeamEdits = async (event, id) => {
+    event.preventDefault();
+    if (!isUserAdmin) { alert('Only tournament admins can edit team members.'); return false; }
+    const form = event.target;
+    const fd = new FormData(form);
+    const updates = {
+      name: String(fd.get('name') || '').trim(),
+      institution: String(fd.get('institution') || '').trim() || null,
+      speaker1_name: String(fd.get('speaker1_name') || '').trim(),
+      speaker1_email: normalizeEmail(fd.get('speaker1_email')) || null,
+      speaker2_name: String(fd.get('speaker2_name') || '').trim(),
+      speaker2_email: normalizeEmail(fd.get('speaker2_email')) || null
+    };
+    if (!updates.name || !updates.speaker1_name || !updates.speaker2_name) {
+      alert('Team name and both partner names are required.'); return false;
+    }
+    if (updates.speaker1_name.toLowerCase() === updates.speaker2_name.toLowerCase()) {
+      alert('The two partner slots must contain different people.'); return false;
+    }
+    if (updates.speaker1_email && updates.speaker1_email === updates.speaker2_email) {
+      alert('Each partner must have a different email address.'); return false;
+    }
+    const claimedEmails = new Set(currentTeams.filter(team => team.id !== id)
+      .flatMap(team => [normalizeEmail(team.speaker1_email), normalizeEmail(team.speaker2_email)]).filter(Boolean));
+    const conflict = [updates.speaker1_email, updates.speaker2_email].find(email => email && claimedEmails.has(email));
+    if (conflict && !confirm(`${conflict} is already assigned to another team. Save anyway?`)) return false;
+
+    const button = form.querySelector('button[type="submit"]');
+    if (button) { button.disabled = true; button.textContent = 'Saving...'; }
+    const { error } = await supabase.from('teams').update(updates).eq('id', id).eq('tournament_id', tournamentId);
+    if (error) {
+      alert(`Could not update the team: ${error.message}`);
+      if (button) { button.disabled = false; button.textContent = 'Save changes'; }
+      return false;
+    }
+    document.getElementById('modal-root').innerHTML = '';
+    await fetchAndRender();
+    return false;
+  };
+
+  window.tcShowTeamEmailModal = (id, teamName, speaker1Name, speaker1Email, speaker2Name, speaker2Email) => {
+    const portalUrl = `${window.location.origin}/#/portal/team/${id}`;
+    const subject = `${teamName || 'Team'} - Tournament Invitation`;
+    const speakers = [
+      { name: speaker1Name, email: speaker1Email, slot: 1 },
+      { name: speaker2Name, email: speaker2Email, slot: 2 }
+    ]
+      .filter(speaker => speaker.name || speaker.email)
+      .map(speaker => ({
+        ...speaker,
+        name: speaker.name || `Speaker ${speaker.slot}`,
+        email: String(speaker.email || '').trim(),
+        portalUrl: `${portalUrl}?speaker=${encodeURIComponent(speaker.name || '')}`
+      }))
+      .map(speaker => {
+        const emailBody = [
+          `Hi ${speaker.name || 'there'},`,
+          '',
+          `Your team ${teamName || 'team'} has been registered for the tournament.`,
+          '',
+          `Your private dashboard: ${speaker.portalUrl}`,
+          '',
+          'Use your dashboard to view draws, room allocations, check in for rounds, and receive live announcements.',
+          '',
+          'Best regards,',
+          'Tournament Tab Core'
+        ].join('\n');
+        return {
+          ...speaker,
+          emailBody,
+          mailtoHref: speaker.email
+            ? `mailto:${encodeURIComponent(speaker.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`
+            : ''
+        };
+      });
+    const safeTeamName = escapeHtml(teamName || 'Team');
+    const modalRoot = document.getElementById('modal-root');
+
+    modalRoot.innerHTML = `
+      <div style="position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; z-index:9999; padding:20px;">
+        <div style="background:white; width:min(560px, 100%); max-height:90vh; overflow:auto; border-radius:12px; box-shadow:0 24px 48px rgba(0,0,0,0.2);">
+          <div style="padding:24px; background:#f8fafc; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; gap:16px;">
+            <h3 style="font-weight:800; font-size:16px; margin:0;">Private Invitations for ${safeTeamName}</h3>
+            <button type="button" aria-label="Close email preview" onclick="document.getElementById('modal-root').innerHTML=''" style="border:none; background:none; cursor:pointer; color:#94a3b8;">${icon('x', 20)}</button>
+          </div>
+          <div style="padding:24px;">
+            ${speakers.length ? speakers.map((speaker, index) => `
+              <section style="padding:${index === 0 ? '0 0 20px' : '20px 0'}; ${index > 0 ? 'border-top:1px solid #e2e8f0;' : ''}">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:12px; flex-wrap:wrap;">
+                  <div>
+                    <div style="font-weight:800; color:var(--color-text);">${escapeHtml(speaker.name)}</div>
+                    <div style="font-size:13px; color:${speaker.email ? '#64748b' : '#b45309'};">${speaker.email ? escapeHtml(speaker.email) : 'No email address saved'}</div>
+                  </div>
+                   <span style="background:#eff6ff; color:#1d4ed8; padding:4px 9px; border-radius:999px; font-size:10px; font-weight:800; text-transform:uppercase;">Speaker ${speaker.slot}</span>
+                </div>
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px; margin-bottom:12px; font-size:12px; color:#475569;">
+                  <strong>Private dashboard</strong><br>
+                  <span style="word-break:break-all;">${escapeHtml(speaker.portalUrl)}</span>
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                   <button type="button" onclick="navigator.clipboard.writeText('${escapeHtml(escapeJsString(speaker.emailBody))}').then(() => alert('Invitation copied!'))" class="btn btn--primary" style="flex:1 1 160px; gap:8px;">${icon('copy', 15)} Copy Email</button>
+                  ${speaker.email
+                    ? `<a href="${escapeHtml(speaker.mailtoHref)}" class="btn btn--outline" style="flex:1 1 160px; display:flex; align-items:center; justify-content:center; gap:8px;">${icon('mail', 15)} Email ${escapeHtml(speaker.name)}</a>`
+                    : `<button type="button" class="btn btn--outline" disabled style="flex:1 1 160px; display:flex; align-items:center; justify-content:center; gap:8px;">${icon('mail', 15)} Email ${escapeHtml(speaker.name)}</button>`}
+                </div>
+              </section>
+            `).join('') : '<div style="font-size:13px; color:#b45309;">No speaker details are saved for this team.</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  window.tcSendAllTeamUrls = async (button) => {
+    if (!isUserAdmin) { alert('Only tournament admins can send private URLs.'); return; }
+    const recipients = currentTeams.flatMap(team => [1, 2].map(slot => ({
+      name: team[`speaker${slot}_name`],
+      email: team[`speaker${slot}_email`],
+      role: 'speaker',
+      teamName: team.name,
+      dashboardUrl: `${window.location.origin}/#/portal/team/${team.id}?speaker=${encodeURIComponent(team[`speaker${slot}_name`] || '')}`
+    }))).filter(r => r.name || r.email);
+    const withEmail = recipients.filter(r => String(r.email || '').trim()).length;
+    if (!withEmail) { alert('No speakers have an email address saved.'); return; }
+    if (!confirm(`Email each speaker their own private URL?
+
+${withEmail} of ${recipients.length} speakers have an email address.`)) return;
+    const original = button.innerHTML;
+    button.disabled = true;
+    try {
+      const result = await sendPrivateUrlsToAll({
+        tournamentId,
+        recipients,
+        onProgress: (done, total) => { button.textContent = `Sending ${done}/${total}...`; }
+      });
+      alert(summarizeBulkSend(result));
+    } finally {
+      button.disabled = false;
+      button.innerHTML = original;
+    }
   };
 
   window.tcImportCSV = () => {
@@ -220,7 +406,9 @@ export async function renderTeams(container) {
       emoji: String(fd.get('emoji') || DEFAULT_TEAM_EMOJI).trim() || DEFAULT_TEAM_EMOJI,
       institution: String(fd.get('institution') || '').trim() || null,
       speaker1_name: String(fd.get('s1') || '').trim() || null,
+      speaker1_email: normalizeEmail(fd.get('s1_email')) || null,
       speaker2_name: String(fd.get('s2') || '').trim() || null,
+      speaker2_email: normalizeEmail(fd.get('s2_email')) || null,
       status: 'Active'
     }).then(async result => {
       if (!result.error || !isMissingEmojiColumn(result.error)) return result;
@@ -229,7 +417,9 @@ export async function renderTeams(container) {
         name,
         institution: String(fd.get('institution') || '').trim() || null,
         speaker1_name: String(fd.get('s1') || '').trim() || null,
+        speaker1_email: normalizeEmail(fd.get('s1_email')) || null,
         speaker2_name: String(fd.get('s2') || '').trim() || null,
+        speaker2_email: normalizeEmail(fd.get('s2_email')) || null,
         status: 'Active'
       });
     });
@@ -261,6 +451,7 @@ export async function renderTeams(container) {
       console.error('Error fetching teams:', error);
       return;
     }
+    currentTeams = data || [];
     renderUI(data || []);
   };
 
@@ -281,15 +472,17 @@ export async function renderTeams(container) {
           </thead>
           <tbody>
             ${teams.map(team => {
-              const teamId = escapeJsString(team.id);
+              const teamId = escapeHtml(escapeJsString(team.id));
               const teamName = escapeHtml(team.name);
-              const teamNameJs = escapeJsString(team.name);
+              const teamNameJs = escapeHtml(escapeJsString(team.name));
               const teamEmoji = escapeHtml(getTeamEmoji(team));
               const institution = escapeHtml(team.institution || '-');
               const speaker1Name = escapeHtml(team.speaker1_name || '-');
-              const speaker1NameJs = escapeJsString(team.speaker1_name || '');
+              const speaker1NameJs = escapeHtml(escapeJsString(team.speaker1_name || ''));
+              const speaker1EmailJs = escapeHtml(escapeJsString(team.speaker1_email || ''));
               const speaker2Name = escapeHtml(team.speaker2_name || '-');
-              const speaker2NameJs = escapeJsString(team.speaker2_name || '');
+              const speaker2NameJs = escapeHtml(escapeJsString(team.speaker2_name || ''));
+              const speaker2EmailJs = escapeHtml(escapeJsString(team.speaker2_email || ''));
               const speaker1Eligibility = escapeHtml(team.speaker1_eligibility || 'OPEN');
               const speaker2Eligibility = escapeHtml(team.speaker2_eligibility || 'OPEN');
               const division = escapeHtml(team.division || 'Open');
@@ -339,10 +532,14 @@ export async function renderTeams(container) {
                   </div>
                 </td>
                 <td style="padding:16px;">
-                  <div style="display:flex; align-items:center; gap:12px;">
+                  <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     ${(team.status || 'Active') === 'Inactive'
                       ? `<span style="background:#f1f5f9; color:#64748b; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">Inactive</span>`
                       : `<span style="background:#ECFDF5; color:#10B981; padding:4px 12px; border-radius:99px; font-size:11px; font-weight:700;">${status}</span>`}
+                    <button onclick="window.tcShowTeamEmailModal('${teamId}', '${teamNameJs}', '${speaker1NameJs}', '${speaker1EmailJs}', '${speaker2NameJs}', '${speaker2EmailJs}')" class="btn btn--outline btn--sm" style="font-size:11px; padding:4px 10px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
+                      ${icon('mail', 12)} Send Email
+                    </button>
+                    ${isUserAdmin ? `<button onclick="window.tcOpenTeamEditor('${teamId}')" class="btn btn--outline btn--sm" style="font-size:11px; padding:4px 10px; height:auto; background:white; color:#334155; border:1px solid #cbd5e1;">${icon('pencil', 12)} Edit members</button>` : ''}
                     <button onclick="window.tcShareTeamURL('${teamId}', '${teamNameJs}', '${speaker1NameJs}')" class="btn btn--outline btn--sm" style="font-size:10px; padding:4px 8px; height:auto; background:white; color:var(--color-primary); border:1px solid #bfdbfe;">
                       ${icon('link', 12)} URL: S1
                     </button>
@@ -371,6 +568,7 @@ export async function renderTeams(container) {
         </div>
         <div style="display:flex; gap:12px; align-items:center;">
           ${isUserAdmin ? `
+            <button onclick="window.tcSendAllTeamUrls(this)" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;" title="Email every speaker their own private URL">${icon('mail', 18)} Send Private URLs</button>
             <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
             <button onclick="document.getElementById('add-team-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Team</button>
           ` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}
@@ -393,8 +591,8 @@ export async function renderTeams(container) {
             <div class="form-group"><label class="form-label">Team Name</label><input name="name" required class="form-input"></div>
             <div class="form-group"><label class="form-label">Institution</label><input name="institution" class="form-input"></div>
             <div class="grid-2">
-              <div class="form-group"><label class="form-label">Speaker 1</label><input name="s1" required class="form-input"></div>
-              <div class="form-group"><label class="form-label">Speaker 2</label><input name="s2" required class="form-input"></div>
+              <div class="form-group"><label class="form-label">Speaker 1</label><input name="s1" required class="form-input"><label class="form-label" style="margin-top:8px;">Email</label><input name="s1_email" type="email" class="form-input"></div>
+              <div class="form-group"><label class="form-label">Speaker 2 / Partner</label><input name="s2" required class="form-input"><label class="form-label" style="margin-top:8px;">Email</label><input name="s2_email" type="email" class="form-input"></div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:12px;">
               <button type="button" onclick="document.getElementById('add-team-modal').style.display='none'" class="btn btn--outline">Cancel</button>

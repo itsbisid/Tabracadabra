@@ -34,6 +34,7 @@ import { renderPrivatePortal } from './pages/private-portal.js';
 import { renderPublicLive } from './pages/public-live.js';
 import { renderPublicSpeaking } from './pages/tournament/public-speaking.js';
 import { renderPSPortal } from './pages/ps-portal.js';
+import { renderFeedbackSandboxAdmin, renderFeedbackSandboxSpeaker } from './pages/feedback-sandbox.js';
 
 const routes = {
   '/': renderLogin,
@@ -65,6 +66,7 @@ const routes = {
   '/tournament/feedback': renderFeedback,
   '/tournament/analytics': renderAnalytics,
   '/tournament/public-speaking': renderPublicSpeaking,
+  '/tournament/feedback-sandbox': renderFeedbackSandboxAdmin,
 };
 
 const publicRoutes = new Set(['/', '/login', '/signup', '/tournaments']);
@@ -123,6 +125,12 @@ async function router() {
     return;
   }
 
+  if (routePath.startsWith('/sandbox/speaker-feedback/')) {
+    app.innerHTML = '';
+    renderFeedbackSandboxSpeaker(app, routePath.split('/sandbox/speaker-feedback/')[1]);
+    return;
+  }
+
   if (routePath.startsWith('/team/') && routePath.endsWith('/progress')) {
     const teamId = routePath.split('/')[2];
     app.innerHTML = '';
@@ -161,7 +169,19 @@ async function router() {
   const render = routes[routePath];
   if (render) {
     app.innerHTML = '';
-    render(app, navigate);
+    try {
+      await render(app, navigate);
+    } catch (error) {
+      console.error(`Could not render ${routePath}`, error);
+      app.innerHTML = `
+        <div style="min-height:70vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+          <div style="max-width:520px;text-align:center;border:1px solid #fecaca;background:#fff7f7;border-radius:12px;padding:24px;">
+            <h2 style="margin:0 0 8px;color:#991b1b;">This page could not load</h2>
+            <p style="margin:0 0 16px;color:#64748b;">Please retry. If the problem continues, the error has been recorded in the browser console.</p>
+            <button class="btn btn--primary" onclick="window.location.reload()">Retry</button>
+          </div>
+        </div>`;
+    }
   } else if (path.includes('access_token=') || path.includes('error=')) {
     // Handle Supabase Auth Redirects that might strip the hash
     navigate('/dashboard');

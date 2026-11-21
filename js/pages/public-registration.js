@@ -1,6 +1,7 @@
 import { icon } from '../components/icons.js';
 import { supabase } from '../lib/supabase.js';
 import { sendRegistrationSubmittedEmail } from '../lib/email-service.js';
+import { escapeHtml } from '../lib/html.js';
 
 export async function renderPublicRegistration(container, token) {
   let selectedRole = ''; // 'team', 'adjudicator', 'captain'
@@ -318,18 +319,18 @@ export async function renderPublicRegistration(container, token) {
           }).catch(() => {});
         });
 
-        container.innerHTML = `
-           <div style="min-height: 100vh; background: #f8fafc; display: flex; align-items: center; justify-content: center; padding: 40px; font-family: 'Inter', sans-serif;">
-            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 20px; width: 100%; max-width: 600px; padding: 60px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
-               <div style="width: 80px; height: 80px; background: #f0fdf4; color: #10b981; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px auto;">
-                 ${icon('check', 40)}
-               </div>
-               <h2 style="font-size: 24px; font-weight: 800; color: #0f172a; margin-bottom: 12px;">Registration Submitted</h2>
-               <p style="color: #64748b; margin-bottom: 32px;">Your registration for ${tournamentName} has been received. The tournament directors will review and confirm your entry shortly.</p>
-               <button onclick="location.hash = '/'" style="color: #0044b3; font-weight: 700; font-size: 14px; background: none; border: none; cursor: pointer;">Return to home</button>
-            </div>
-          </div>
+        form.reset();
+        statusBar.style.display = 'flex';
+        statusBar.style.alignItems = 'flex-start';
+        statusBar.style.gap = '10px';
+        statusBar.style.background = '#f0fdf4';
+        statusBar.style.borderColor = '#bbf7d0';
+        statusBar.style.color = '#166534';
+        statusBar.innerHTML = `
+          <span style="display:flex; margin-top:1px;">${icon('checkCircle', 18)}</span>
+          <span><strong>Registration received.</strong> The ${escapeHtml(tournamentName)} tab team will review it shortly. This form is ready for another entry.</span>
         `;
+        statusBar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
       btn.disabled = false;
       btn.innerHTML = originalText;

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase.js';
 import { escapeHtml, escapeJsString } from '../lib/html.js';
 import { getPortalPushStatus, subscribeToPortalPush } from '../lib/push-service.js';
 import { teamLabelFromMap, teamLabelHtml } from '../lib/team-display.js';
+import { fetchVisibleStandingsBallots } from '../lib/visible-results.js';
 import QRCode from 'qrcode';
 
 function getRoleLabel(role) {
@@ -56,7 +57,8 @@ async function fetchProfile(role, id) {
 }
 
 async function fetchPairings(role, id, tournamentId) {
-  const select = '*, rounds!inner(*), ballots(*)';
+  // Private portals only need ballot status. Never expose stored speaker scores here.
+  const select = '*, rounds!inner(*), ballots(id,status,submitted_by_id)';
   const byTeams = `og_team_id.eq.${id},oo_team_id.eq.${id},cg_team_id.eq.${id},co_team_id.eq.${id}`;
   let pairings = [];
 
@@ -243,11 +245,26 @@ function getJudgeName(pairing, judgeId) {
   return pairing.judgeMap?.get(judgeId)?.name || judgeId || 'TBD';
 }
 
+function isDrawReleasedForRole(round, role) {
+  if (!round) return false;
+  if (role === 'judge' && 'judge_draw_released_at' in round) return Boolean(round.judge_draw_released_at);
+  if (role !== 'judge' && 'speaker_draw_released_at' in round) return Boolean(round.speaker_draw_released_at);
+  return round.status === 'Released';
+}
+
 function getFeedbackTargetsForPairing(pairing, role, profile) {
   if (!pairing?.chair_id) return [];
 
   if (role === 'team') {
-    return [{ id: pairing.chair_id, label: `Chair: ${getJudgeName(pairing, pairing.chair_id)}` }];
+    return [
+      { id: pairing.chair_id, label: `Chair: ${getJudgeName(pairing, pairing.chair_id)}` },
+      ...(pairing.adjudicator_allocations || [])
+        .filter(allocation => ['WING', 'TRAINEE'].includes(allocation.role))
+        .map(allocation => ({
+          id: allocation.adjudicator_id,
+          label: `${allocation.role === 'TRAINEE' ? 'Trainee' : 'Wing'}: ${getJudgeName(pairing, allocation.adjudicator_id)}`
+        }))
+    ];
   }
 
   const position = judgePositionForPairing(pairing, profile.id);
@@ -265,13 +282,12 @@ function getFeedbackTargetsForPairing(pairing, role, profile) {
 
 function getLatestCompletedPairing(pairings) {
   return pairings
-    .filter(pairing => Array.isArray(pairing.ballots) && pairing.ballots.length > 0)
+    .filter(pairing => (Array.isArray(pairing.ballots) && pairing.ballots.length > 0)
+      || String(pairing.rounds?.status || '').toLowerCase() === 'completed')
     .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0] || null;
 }
 
 function getFeedbackBlockInfo(pairings, role, profile, tournament) {
-  if (tournament?.bypass_feedback_lock) return { blocked: false, pairing: null, missingTargets: [] };
-
   const pairing = getLatestCompletedPairing(pairings);
   if (!pairing) return { blocked: false, pairing: null, missingTargets: [] };
 
@@ -279,7 +295,9 @@ function getFeedbackBlockInfo(pairings, role, profile, tournament) {
   const missingTargets = getFeedbackTargetsForPairing(pairing, role, profile)
     .filter(target => !submittedTargetIds.has(target.id));
 
-  return { blocked: missingTargets.length > 0, pairing, missingTargets };
+  // Feedback is optional. Keep missing targets available for the feedback forms,
+  // but never hide draws, assignments, or ballots because feedback is incomplete.
+  return { blocked: false, pairing, missingTargets };
 }
 
 function getPrepCountdown(round) {
@@ -329,7 +347,7 @@ function renderProfileCard(role, profile, tournament) {
 
 function renderDrawCard(role, profile, pairings, teamMap) {
   const releasedPairings = pairings
-    .filter(pairing => pairing.rounds?.status === 'Released')
+    .filter(pairing => isDrawReleasedForRole(pairing.rounds, role))
     .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0));
 
   if (releasedPairings.length === 0) {
@@ -345,7 +363,7 @@ function renderDrawCard(role, profile, pairings, teamMap) {
     <section class="portal-card">
       <div class="portal-card__heading">${icon('mapPin', 18)} Debate draw / venue</div>
       ${releasedPairings.map(pairing => {
-        const position = role === 'team' ? positionForTeam(pairing, profile.id) : 'Chair';
+        const position = role === 'team' ? positionForTeam(pairing, profile.id) : judgePositionForPairing(pairing, profile.id);
         const blind = isBlindForJudge(pairing, role);
         return `
           <div style="border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-top:12px;">
@@ -411,24 +429,28 @@ function renderBallotCard(role, profile, pairings, blockInfo) {
     `;
   }
 
-  const openBallots = blockInfo?.blocked ? [] : pairings.filter(pairing => {
-    const isReleased = pairing.rounds?.status === 'Released';
-    const hasBallot = Array.isArray(pairing.ballots) && pairing.ballots.length > 0;
-    return isReleased && !hasBallot && judgePositionForPairing(pairing, profile.id) === 'Chair';
-  });
+  const assignedPairings = pairings.filter(pairing => Boolean(judgePositionForPairing(pairing, profile.id)));
 
   return `
-    <section class="portal-card">
-      <div class="portal-card__heading">${icon('clipboardCheck', 18)} Ballots</div>
-      ${openBallots.length === 0 ? `
-        <p class="portal-muted">No ballot is currently open for this adjudicator link.</p>
-      ` : openBallots.map(pairing => `
+    <section id="portal-ballot-card" class="portal-card">
+      <div class="portal-card__heading">${icon('clipboardCheck', 18)} Judge ballot</div>
+      ${assignedPairings.length === 0 ? `
+        <p class="portal-muted">Your ballot form will appear here when you are assigned to a room.</p>
+      ` : assignedPairings.map(pairing => `
         <div class="portal-inline-task">
           <div>
             <strong>${escapeHtml(pairing.rounds?.name || 'Round')} · ${escapeHtml(pairing.room_label || 'Room')}</strong>
-            <span>Submit the official ballot for this room.</span>
+            <span>${Array.isArray(pairing.ballots) && pairing.ballots.length > 0
+              ? 'The official room ballot has been submitted.'
+              : !isDrawReleasedForRole(pairing.rounds, role)
+                ? 'Waiting for the administrator to release the judge draw.'
+                : blockInfo?.blocked
+                  ? 'Complete the required feedback to unlock this ballot.'
+                  : 'Enter team ranks and speaker scores, then confirm the official ballot.'}</span>
           </div>
-          <button class="portal-button" type="button" data-portal-action="ballot" data-pairing-id="${escapeHtml(pairing.id)}">${icon('fileText', 16)} Open ballot</button>
+          ${isDrawReleasedForRole(pairing.rounds, role) && !(Array.isArray(pairing.ballots) && pairing.ballots.length > 0) && !blockInfo?.blocked
+            ? `<button class="portal-button" type="button" data-portal-action="ballot" data-pairing-id="${escapeHtml(pairing.id)}">${icon('fileText', 16)} Fill ballot</button>`
+            : `<span class="portal-status-pill ${Array.isArray(pairing.ballots) && pairing.ballots.length > 0 ? 'is-success' : 'is-warning'}">${Array.isArray(pairing.ballots) && pairing.ballots.length > 0 ? 'Submitted' : 'Locked'}</span>`}
         </div>
       `).join('')}
     </section>
@@ -457,6 +479,7 @@ function renderFeedbackCard(role, profile, blockInfo) {
             <div class="portal-feedback-target">${escapeHtml(target.label)}</div>
             <label>Score<input class="portal-input" name="score" type="number" min="1" max="10" required placeholder="1-10"></label>
             <label>Comments<textarea class="portal-input" name="comments" rows="4" placeholder="Optional context for tab/adjudication core"></textarea></label>
+            <label style="display:flex; grid-template-columns:auto 1fr; align-items:center; gap:8px; text-transform:none; letter-spacing:0;"><input name="anonymous" type="checkbox"> Submit anonymously to the judge</label>
             <button class="portal-button" type="submit">${icon('send', 16)} Submit feedback</button>
           </form>
         `).join('')}
@@ -526,11 +549,48 @@ function renderPortalNav(tournament) {
         <button type="button" data-portal-action="scroll" data-target="portal-round">Round</button>
         <button type="button" data-portal-action="scroll" data-target="portal-motions">Motions</button>
         <button type="button" data-portal-action="scroll" data-target="portal-feedback-card">Feedback</button>
+        <button type="button" data-portal-action="scroll" data-target="portal-standings">Standings</button>
         <button type="button" data-portal-action="scroll" data-target="portal-registration">Registration</button>
       </div>
       <button class="portal-copy-link" type="button" data-portal-action="copy-url">${icon('copy', 16)} Copy URL</button>
     </nav>
   `;
+}
+
+function buildPortalStandings(teams, ballots, rounds = []) {
+  const visibleRoundIds = new Set((ballots || []).map(ballot => ballot.round_id).filter(Boolean));
+  const visibleRounds = (rounds || [])
+    .filter(round => visibleRoundIds.has(round.id))
+    .sort((a, b) => Number(a.round_num || 0) - Number(b.round_num || 0));
+  const teamStandings = (teams || []).map(team => {
+    const rows = (ballots || []).filter(ballot => ballot.team_id === team.id);
+    const pointsByRound = new Map(rows.map(row => [row.round_id, Number(row.points || 0)]));
+    return {
+      ...team,
+      points: rows.reduce((sum, row) => sum + Number(row.points || 0), 0),
+      pointsByRound
+    };
+  }).sort((a, b) => b.points - a.points || String(a.name || '').localeCompare(String(b.name || '')));
+
+  return { teamStandings, visibleRounds };
+}
+
+function renderPortalStandings(standings) {
+  const teamRows = standings.teamStandings.map((team, index) => `
+    <tr data-standing-row data-search="${escapeHtml(`${team.name || ''} ${team.institution || ''}`.toLowerCase())}">
+      <td>#${index + 1}</td><td><strong>${teamLabelHtml(team)}</strong><small>${escapeHtml(team.institution || 'Independent')}</small></td>
+      ${standings.visibleRounds.map(round => `<td>${team.pointsByRound.has(round.id) ? team.pointsByRound.get(round.id) : '—'}</td>`).join('')}
+      <td><strong>${team.points}</strong></td>
+    </tr>`).join('');
+  return `
+    <section id="portal-standings" class="portal-panel">
+      <div class="portal-panel-head"><div><span>Released results</span><h2>Team standings</h2></div></div>
+      <div class="portal-panel-body">
+        <input id="portal-standings-search" class="portal-input" type="search" placeholder="Search teams..." aria-label="Search team standings">
+        <div class="portal-table-wrap"><table class="portal-standings-table"><thead><tr><th>Rank</th><th>Team</th>${standings.visibleRounds.map(round => `<th>R${escapeHtml(round.round_num)}</th>`).join('')}<th>Total Points</th></tr></thead><tbody>${teamRows}</tbody></table></div>
+        ${!teamRows ? '<p class="portal-empty">No released results are available yet.</p>' : ''}
+      </div>
+    </section>`;
 }
 
 function renderWarning(personName) {
@@ -547,7 +607,7 @@ function renderWarning(personName) {
 function renderHero(role, profile, personName, tournament, pairings, blockInfo) {
   const tournamentName = getTournamentName(tournament);
   const releasedPairing = blockInfo?.blocked ? null : pairings
-    .filter(pairing => pairing.rounds?.status === 'Released')
+    .filter(pairing => isDrawReleasedForRole(pairing.rounds, role))
     .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
   const assignment = releasedPairing
     ? `${releasedPairing.rounds?.name || 'Round'} · ${releasedPairing.room_label || 'Venue TBD'}`
@@ -581,9 +641,9 @@ function getOpenBallots(role, id, pairings) {
   if (role !== 'judge') return [];
 
   return pairings.filter(pairing => {
-    const isReleased = pairing.rounds?.status === 'Released';
+    const isReleased = isDrawReleasedForRole(pairing.rounds, role);
     const hasBallot = Array.isArray(pairing.ballots) && pairing.ballots.length > 0;
-    return isReleased && !hasBallot && judgePositionForPairing(pairing, id) === 'Chair';
+    return isReleased && !hasBallot && Boolean(judgePositionForPairing(pairing, id));
   });
 }
 
@@ -670,6 +730,13 @@ function renderActionRows(role, id, tournament, pairings, notificationStatus, ch
         <strong>${blockInfo?.blocked ? 'Feedback required' : 'Feedback'}</strong>
         <small>${blockInfo?.blocked ? 'Submit required feedback to unlock next-round access.' : 'Jump to the available feedback form.'}</small>
       </button>
+      ${role === 'judge' ? `
+        <button class="portal-action-card ${openBallots.length ? 'portal-action-card--primary' : ''}" type="button" data-portal-action="scroll" data-target="portal-ballot-card">
+          <span class="portal-action-icon">${icon('clipboardCheck', 20)}</span>
+          <strong>${openBallots.length ? 'Fill ballot' : 'Judge ballot'}</strong>
+          <small>${openBallots.length ? 'Your assigned room ballot is ready.' : 'View your ballot status and assignment.'}</small>
+        </button>
+      ` : ''}
       ${openBallots.map(pairing => `
         <button class="portal-action-card portal-action-card--primary" type="button" data-portal-action="ballot" data-pairing-id="${escapeHtml(pairing.id)}">
           <span class="portal-action-icon">${icon('clipboardCheck', 20)}</span>
@@ -700,7 +767,7 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap, blockInfo) {
   }
 
   const releasedPairing = pairings
-    .filter(pairing => pairing.rounds?.status === 'Released')
+    .filter(pairing => isDrawReleasedForRole(pairing.rounds, role))
     .sort((a, b) => (b.rounds?.round_num || 0) - (a.rounds?.round_num || 0))[0];
 
   if (!releasedPairing) {
@@ -750,6 +817,14 @@ function renderInThisRoundPanel(role, profile, pairings, teamMap, blockInfo) {
           <div>
             <span>Venue</span>
             <strong>${escapeHtml(releasedPairing.room_label || 'TBD')}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>${escapeHtml(releasedPairing.rounds?.status || 'Draft')}</strong>
+          </div>
+          <div>
+            <span>Start time</span>
+            <strong>${releasedPairing.rounds?.scheduled_start_at ? escapeHtml(new Date(releasedPairing.rounds.scheduled_start_at).toLocaleString()) : 'Not scheduled'}</strong>
           </div>
           ${prepCountdown ? `
             <div>
@@ -866,13 +941,15 @@ export async function renderPrivatePortal(container, role, id) {
   }
 
   const tournamentId = profile.tournament_id;
-  const [{ data: tournament }, { data: teams }, { data: rounds }] = await Promise.all([
+  const [{ data: tournament }, { data: teams }, { data: rounds }, visibleBallots] = await Promise.all([
     supabase.from('tournaments').select('*').eq('id', tournamentId).single(),
     supabase.from('teams').select('*').eq('tournament_id', tournamentId),
-    supabase.from('rounds').select('*').eq('tournament_id', tournamentId).order('round_num', { ascending: true })
+    supabase.from('rounds').select('*').eq('tournament_id', tournamentId).order('round_num', { ascending: true }),
+    fetchVisibleStandingsBallots(tournamentId, { includeSpeakerScores: false }).catch(() => [])
   ]);
 
   const teamMap = new Map((teams || []).map(team => [team.id, team]));
+  const portalStandings = buildPortalStandings(teams || [], visibleBallots || [], rounds || []);
   const pairings = await fetchPairings(safeRole, profile.id, tournamentId);
   const personName = getPersonalName(safeRole, profile);
   let portalSession;
@@ -895,6 +972,7 @@ export async function renderPrivatePortal(container, role, id) {
     if (pairing) {
       showBallotModal(pairing, () => renderPrivatePortal(container, safeRole, id), {
         teamMap,
+        judgeRole: judgePositionForPairing(pairing, profile.id),
         hideTeamIdentities: isBlindForJudge(pairing, safeRole),
         onSubmit: (ballots) => postPortalAction('/api/portal-ballot', {
           token: portalSession.token,
@@ -1012,6 +1090,7 @@ export async function renderPrivatePortal(container, role, id) {
         targetId: formData.get('target_id'),
         score: Number(formData.get('score')),
         comments: formData.get('comments')
+        ,anonymous: formData.get('anonymous') === 'on'
       });
       showToast('Feedback submitted.');
       renderPrivatePortal(container, safeRole, id);
@@ -1097,6 +1176,11 @@ export async function renderPrivatePortal(container, role, id) {
         .portal-form label { display:grid; gap:6px; color:#526174; font-size:12px; font-weight:900; text-transform:uppercase; letter-spacing:.04em; }
         .portal-input { width:100%; border:1px solid #cfdbe8; border-radius:8px; padding:11px 12px; font-size:14px; font-family:inherit; box-sizing:border-box; color:#172033; }
         .portal-input:focus { outline:2px solid rgba(24,166,137,.18); border-color:#18a689; }
+        .portal-table-wrap { overflow:auto; border:1px solid #edf1f6; border-radius:8px; }
+        .portal-standings-table { width:100%; min-width:560px; border-collapse:collapse; font-size:13px; }
+        .portal-standings-table th { padding:10px 12px; text-align:left; background:#f8fafc; color:#64748b; font-size:10px; text-transform:uppercase; }
+        .portal-standings-table td { padding:11px 12px; border-top:1px solid #edf1f6; }
+        .portal-standings-table small { display:block; color:#64748b; margin-top:2px; }
         .portal-registration-rows { padding:0; }
         .portal-registration-rows > div { display:grid; grid-template-columns:120px minmax(0,1fr); gap:12px; padding:14px 20px; border-bottom:1px solid #edf1f6; align-items:start; }
         .portal-registration-rows > div:last-child { border-bottom:0; }
@@ -1156,6 +1240,7 @@ export async function renderPrivatePortal(container, role, id) {
             ${renderInThisRoundPanel(safeRole, profile, pairings, teamMap, blockInfo)}
             ${renderMotionsPanel(rounds || [])}
             ${renderFeedbackCard(safeRole, profile, blockInfo)}
+            ${renderPortalStandings(portalStandings)}
           </div>
           <div>
             ${renderRegistrationPanel(safeRole, profile, personName)}
@@ -1186,6 +1271,12 @@ export async function renderPrivatePortal(container, role, id) {
   });
 
   document.getElementById('portal-find-form')?.addEventListener('submit', findInPage);
+  document.getElementById('portal-standings-search')?.addEventListener('input', event => {
+    const query = String(event.target.value || '').trim().toLowerCase();
+    container.querySelectorAll('[data-standing-row]').forEach(row => {
+      row.style.display = !query || String(row.dataset.search || '').includes(query) ? '' : 'none';
+    });
+  });
 
   const updatePrepCountdowns = () => {
     document.querySelectorAll('[data-prep-end]').forEach(element => {
@@ -1204,4 +1295,21 @@ export async function renderPrivatePortal(container, role, id) {
   updatePrepCountdowns();
   clearInterval(window.tcPortalPrepTimer);
   window.tcPortalPrepTimer = setInterval(updatePrepCountdowns, 1000);
+
+  if (window.tcPortalRealtimeChannel) {
+    supabase.removeChannel(window.tcPortalRealtimeChannel);
+  }
+  clearTimeout(window.tcPortalRealtimeRefresh);
+  const refreshPortal = () => {
+    clearTimeout(window.tcPortalRealtimeRefresh);
+    window.tcPortalRealtimeRefresh = setTimeout(() => {
+      if (document.querySelector('.portal-shell')) renderPrivatePortal(container, safeRole, id);
+    }, 250);
+  };
+  window.tcPortalRealtimeChannel = supabase
+    .channel(`portal-${tournamentId}-${safeRole}-${id}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'rounds', filter: `tournament_id=eq.${tournamentId}` }, refreshPortal)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'draw_pairings', filter: `tournament_id=eq.${tournamentId}` }, refreshPortal)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'adjudicator_allocations' }, refreshPortal)
+    .subscribe();
 }

@@ -17,6 +17,15 @@ alter table if exists public.rounds
   add column if not exists motion_released_at timestamptz;
 
 alter table if exists public.rounds
+  add column if not exists scheduled_start_at timestamptz;
+
+alter table if exists public.rounds
+  add column if not exists speaker_draw_released_at timestamptz;
+
+alter table if exists public.rounds
+  add column if not exists judge_draw_released_at timestamptz;
+
+alter table if exists public.rounds
   add column if not exists prep_time_override integer;
 
 -- Preserve the visibility of historical completed blind rounds when upgrading.

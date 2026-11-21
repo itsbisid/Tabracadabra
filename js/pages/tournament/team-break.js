@@ -12,9 +12,8 @@ export async function renderTeamBreak(container) {
 
   let breakSize = 16;
 
-  // Standings computed identically to the Team Standings page: total team
-  // points, then total speaker points as the tiebreak. Deactivated teams are
-  // excluded so a dropped team never occupies a break slot.
+  // Rank by total team points first, with total speaker points as the
+  // tiebreak. Deactivated teams cannot occupy a break slot.
   const computeStandings = (teams, ballots) => {
     return (teams || [])
       .filter(team => (team.status || 'Active') !== 'Inactive')
@@ -98,7 +97,7 @@ export async function renderTeamBreak(container) {
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; gap:16px; flex-wrap:wrap;">
         <div>
           <h1 style="font-size:24px; font-weight:800; color:var(--color-text); margin-bottom:4px;">Team break</h1>
-          <div style="font-size:14px; color:var(--color-text-muted);">Live team break computed from confirmed ballots (points, then speaker points).</div>
+          <div style="font-size:14px; color:var(--color-text-muted);">Live team break computed from confirmed ballots (total team points first, then speaker scores).</div>
         </div>
         <div style="display:flex; align-items:center; gap:12px;">
           <span class="badge ${released ? 'badge--active' : 'badge--draft'}">${released ? 'PUBLISHED' : 'NOT PUBLISHED'}</span>

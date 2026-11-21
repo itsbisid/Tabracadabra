@@ -62,8 +62,47 @@ export async function renderPublish(container) {
     navigator.clipboard.writeText(liveUrl).then(() => alert('Live URL copied.'));
   };
 
+  window.tcTogglePublicSpeakerScores = async shouldShow => {
+    if (!isUserAdmin) { alert('Only tournament admins can change public score visibility.'); return; }
+    const confirmation = shouldShow
+      ? 'Release all speaker points and the individual standings to the public live page?'
+      : 'Hide all speaker points and the entire individual standings table until you release them again?';
+    if (!confirm(confirmation)) return;
+    const settings = { ...(tournament.settings || {}), public_show_speaker_scores: shouldShow };
+    const { error } = await supabase.from('tournaments').update({ settings }).eq('id', tournamentId);
+    if (error) alert(error.message);
+    else {
+      alert(shouldShow
+        ? 'Speaker points and individual standings are now public.'
+        : 'Speaker points and individual standings are now hidden.');
+      fetchAndRender();
+    }
+  };
+
+  window.tcPublishWithoutSpeakerScores = async () => {
+    if (!isUserAdmin) {
+      alert('Only tournament admins can publish the live page.');
+      return;
+    }
+
+    if (!confirm('Publish the live page with all individual and round-by-round speaker scores hidden? Team points and released motions will remain visible.')) return;
+
+    const settings = { ...(tournament.settings || {}), public_show_speaker_scores: false };
+    const { error } = await supabase
+      .from('tournaments')
+      .update({ is_tab_released: true, settings })
+      .eq('id', tournamentId);
+
+    if (error) alert(error.message);
+    else {
+      alert('Live page published. Speaker scores are hidden.');
+      fetchAndRender();
+    }
+  };
+
   const renderUI = (rounds, pairings, ballots) => {
     const released = Boolean(tournament.is_tab_released);
+    const showSpeakerScores = tournament.settings?.public_show_speaker_scores !== false;
     const completedRounds = rounds.filter(round => String(round.status || '').toLowerCase() === 'completed').length;
     const roundsWithMotions = rounds.filter(round => round.motion_text).length;
     const expectedBallots = pairings.length * 4;
@@ -106,9 +145,11 @@ export async function renderPublish(container) {
               ${released
                 ? `<button class="btn btn--danger" onclick="window.tcTogglePublicTab(false)">${icon('eyeOff', 15)} Hide live page</button>`
                 : `<button class="btn btn--primary" onclick="window.tcTogglePublicTab(true)">${icon('eye', 15)} Publish live page</button>`}
+              <button class="btn btn--outline" onclick="window.tcPublishWithoutSpeakerScores()">${icon('eyeOff', 15)} Publish with scores hidden</button>
               <button class="btn btn--outline" onclick="window.tcCopyLiveUrl()">${icon('copy', 15)} Copy URL</button>
               <a class="btn btn--outline" href="#/live/${escapeHtml(tournamentId)}" target="_blank" style="display:inline-flex; align-items:center; gap:8px;">${icon('monitor', 15)} Open preview</a>
             </div>
+            <div style="margin-top:16px; border:1px solid ${showSpeakerScores ? '#fecaca' : '#bbf7d0'}; background:${showSpeakerScores ? '#fffafa' : '#f8fffb'}; border-radius:8px; padding:14px; display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap;"><div><strong style="display:block;">Speaker results visibility</strong><span style="font-size:12px;color:#64748b;">${showSpeakerScores ? 'Speaker points and the individual standings are currently public.' : 'Speaker points and the entire individual standings table are hidden; team points remain public.'}</span></div><button class="btn ${showSpeakerScores ? 'btn--danger' : 'btn--primary'} btn--sm" onclick="window.tcTogglePublicSpeakerScores(${showSpeakerScores ? 'false' : 'true'})">${icon(showSpeakerScores ? 'eyeOff' : 'eye',15)} ${showSpeakerScores ? 'Hide speaker points & individual standings' : 'Release speaker points & individual standings'}</button></div>
           </section>
 
           <section class="card" style="padding:24px;">
@@ -137,6 +178,7 @@ export async function renderPublish(container) {
             <h3 style="font-size:14px; font-weight:900; color:#172033; margin:0 0 8px;">What appears publicly</h3>
             <div style="display:grid; gap:8px; font-size:13px; color:#64748b;">
               <div>${icon('trophy', 14)} Team standings</div>
+              <div>${icon(showSpeakerScores ? 'eye' : 'eyeOff', 14)} Speaker scores ${showSpeakerScores ? 'visible' : 'hidden'}</div>
               <div>${icon('fileText', 14)} Released motions</div>
               <div>${icon('users', 14)} Basic tournament counts</div>
             </div>

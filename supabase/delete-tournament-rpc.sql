@@ -30,7 +30,8 @@ begin
     from public.tournament_memberships membership
     where membership.tournament_id::text = target_tournament_id
       and membership.user_id = current_user_id
-      and lower(coalesce(membership.role, '')) in (
+      and lower(replace(coalesce(membership.role, ''), ' ', '_')) in (
+        'chief_tab_master',
         'director',
         'tab_director',
         'convenor',

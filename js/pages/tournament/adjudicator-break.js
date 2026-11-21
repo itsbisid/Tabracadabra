@@ -18,15 +18,14 @@ export async function renderAdjudicatorBreak(container) {
     return Number.isFinite(number) ? number : 0;
   };
 
-  const buildRankings = (adjudicators, feedback) => {
+  const buildRankings = (adjudicators, feedback, pairings, allocations) => {
     const feedbackByJudge = new Map();
     for (const item of feedback || []) {
       if (!item.target_judge_id) continue;
-      const entry = feedbackByJudge.get(item.target_judge_id) || { total: 0, count: 0 };
+      const entry = feedbackByJudge.get(item.target_judge_id) || { scores: [] };
       const score = Number(item.score);
       if (Number.isFinite(score)) {
-        entry.total += score;
-        entry.count += 1;
+        entry.scores.push(score);
       }
       feedbackByJudge.set(item.target_judge_id, entry);
     }
@@ -34,18 +33,35 @@ export async function renderAdjudicatorBreak(container) {
     return (adjudicators || [])
       .filter(adjudicator => (adjudicator.status || 'Active') !== 'Inactive')
       .map(adjudicator => {
-        const summary = feedbackByJudge.get(adjudicator.id) || { total: 0, count: 0 };
+        const scores = [...(feedbackByJudge.get(adjudicator.id)?.scores || [])].sort((a, b) => a - b);
+        const robustScores = scores.length >= 5 ? scores.slice(1, -1) : scores;
+        const rawAverage = robustScores.length ? robustScores.reduce((sum, score) => sum + score, 0) / robustScores.length : null;
+        const adjustedAverage = rawAverage == null ? 5.5 : ((rawAverage * robustScores.length) + 11) / (robustScores.length + 2);
+        const chairRounds = (pairings || []).filter(pairing => pairing.chair_id === adjudicator.id).length;
+        const panelRounds = (allocations || []).filter(allocation => allocation.adjudicator_id === adjudicator.id).length;
+        const roundsJudged = chairRounds + panelRounds;
+        const adminRaw = numberOrZero(adjudicator.admin_evaluation ?? adjudicator.score);
+        const adminScore = Math.max(0, Math.min(10, adminRaw > 10 ? adminRaw / 10 : adminRaw));
+        const penalty = Math.max(0, numberOrZero(adjudicator.penalty_points ?? adjudicator.penalties));
+        const concernPenalty = Math.max(0, numberOrZero(adjudicator.concern_count ?? adjudicator.concerns_count)) * 0.5;
+        const experienceScore = roundsJudged ? Math.min(10, ((chairRounds * 2 + panelRounds) / roundsJudged) * 5) : 0;
+        const volumeScore = Math.min(10, roundsJudged * 2);
+        const breakScore = Math.max(0, (adjustedAverage * 0.5) + (volumeScore * 0.15) + (experienceScore * 0.15) + (adminScore * 0.2) - penalty - concernPenalty);
         return {
           ...adjudicator,
-          tabScore: numberOrZero(adjudicator.score),
-          feedbackCount: summary.count,
-          feedbackAverage: summary.count ? summary.total / summary.count : null
+          tabScore: adminScore,
+          feedbackCount: scores.length,
+          feedbackAverage: rawAverage,
+          adjustedAverage,
+          chairRounds,
+          panelRounds,
+          roundsJudged,
+          penalty: penalty + concernPenalty,
+          breakScore
         };
       })
       .sort((a, b) => {
-        const feedbackOrder = (b.feedbackAverage ?? -1) - (a.feedbackAverage ?? -1);
-        return feedbackOrder
-          || (b.tabScore - a.tabScore)
+        return (b.breakScore - a.breakScore)
           || String(a.name || '').localeCompare(String(b.name || ''));
       });
   };
@@ -101,10 +117,12 @@ export async function renderAdjudicatorBreak(container) {
 
   const fetchAndRender = async () => {
     isUserAdmin = await isAdmin(tournamentId);
-    const [tournamentResult, adjudicatorResult, feedbackResult] = await Promise.all([
+    const [tournamentResult, adjudicatorResult, feedbackResult, pairingResult, allocationResult] = await Promise.all([
       supabase.from('tournaments').select('settings').eq('id', tournamentId).single(),
       supabase.from('adjudicators').select('*').eq('tournament_id', tournamentId),
-      supabase.from('judge_feedback').select('target_judge_id,score').eq('tournament_id', tournamentId)
+      supabase.from('judge_feedback').select('target_judge_id,score').eq('tournament_id', tournamentId),
+      supabase.from('draw_pairings').select('id,chair_id').eq('tournament_id', tournamentId),
+      supabase.from('adjudicator_allocations').select('pairing_id,adjudicator_id,role')
     ]);
 
     if (adjudicatorResult.error) {
@@ -115,7 +133,9 @@ export async function renderAdjudicatorBreak(container) {
     const settings = tournamentResult.data?.settings || {};
     const savedSize = Number(settings.adjudicator_break_size);
     if (Number.isFinite(savedSize) && savedSize > 0) breakSize = savedSize;
-    currentRankings = buildRankings(adjudicatorResult.data, feedbackResult.data);
+    const pairingIds = new Set((pairingResult.data || []).map(pairing => pairing.id));
+    const tournamentAllocations = (allocationResult.data || []).filter(allocation => pairingIds.has(allocation.pairing_id));
+    currentRankings = buildRankings(adjudicatorResult.data, feedbackResult.data, pairingResult.data, tournamentAllocations);
     renderUI(settings, currentRankings);
   };
 
@@ -140,12 +160,15 @@ export async function renderAdjudicatorBreak(container) {
           </td>
           <td style="padding:14px 16px; text-align:center; font-weight:700;">${feedbackScore}</td>
           <td style="padding:14px 16px; text-align:center; color:#64748b;">${adjudicator.feedbackCount}</td>
+          <td style="padding:14px 16px; text-align:center;">${adjudicator.chairRounds}C / ${adjudicator.panelRounds}P</td>
           <td style="padding:14px 16px; text-align:center; font-weight:700;">${adjudicator.tabScore.toFixed(1)}</td>
+          <td style="padding:14px 16px; text-align:center; color:${adjudicator.penalty ? '#b91c1c' : '#64748b'};">-${adjudicator.penalty.toFixed(1)}</td>
+          <td style="padding:14px 16px; text-align:center; font-weight:900;">${adjudicator.breakScore.toFixed(2)}</td>
           <td style="padding:14px 16px; text-align:right;">
             ${breaking ? '<span style="font-size:10px; font-weight:800; color:#059669; text-transform:uppercase;">Breaking</span>' : (firstOut ? '<span style="font-size:10px; font-weight:800; color:#dc2626; text-transform:uppercase;">First out</span>' : '')}
           </td>
         </tr>
-        ${breaking && rank === breakSize ? '<tr><td colspan="6" style="padding:0;"><div style="height:2px; background:#10b981;"></div></td></tr>' : ''}
+        ${breaking && rank === breakSize ? '<tr><td colspan="9" style="padding:0;"><div style="height:2px; background:#10b981;"></div></td></tr>' : ''}
       `;
     }).join('');
 
@@ -162,7 +185,7 @@ export async function renderAdjudicatorBreak(container) {
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:20px;">
         <div>
           <h1 style="font-size:24px; font-weight:800; margin-bottom:4px;">Adjudicator break</h1>
-          <p style="font-size:14px; color:var(--color-text-muted); margin:0;">Ranked by confirmed feedback average, then tab score.</p>
+          <p style="font-size:14px; color:var(--color-text-muted); margin:0;">Break score: 50% robust feedback, 15% rounds judged, 15% chair/panel experience, 20% admin evaluation, less penalties and concerns.</p>
         </div>
         <span class="badge ${released ? 'badge--active' : 'badge--draft'}">${released ? 'PUBLISHED' : 'NOT PUBLISHED'}</span>
       </div>
@@ -170,14 +193,17 @@ export async function renderAdjudicatorBreak(container) {
       <div class="card" style="padding:16px 20px; margin-bottom:16px;">${controls}</div>
 
       <div class="card" style="padding:0; overflow:auto;">
-        <table style="width:100%; min-width:720px; border-collapse:collapse; font-size:14px;">
+        <table style="width:100%; min-width:1040px; border-collapse:collapse; font-size:14px;">
           <thead style="background:#f8fafc; border-bottom:1px solid #e2e8f0;">
             <tr>
               <th style="padding:14px 16px; text-align:left; font-size:11px; text-transform:uppercase; color:#64748b; width:70px;">Rank</th>
               <th style="padding:14px 16px; text-align:left; font-size:11px; text-transform:uppercase; color:#64748b;">Adjudicator</th>
               <th style="padding:14px 16px; text-align:center; font-size:11px; text-transform:uppercase; color:#64748b;">Feedback</th>
               <th style="padding:14px 16px; text-align:center; font-size:11px; text-transform:uppercase; color:#64748b;">Responses</th>
-              <th style="padding:14px 16px; text-align:center; font-size:11px; text-transform:uppercase; color:#64748b;">Tab score</th>
+              <th style="padding:14px 16px; text-align:center; font-size:11px; text-transform:uppercase; color:#64748b;">Experience</th>
+              <th style="padding:14px 16px; text-align:center; font-size:11px; text-transform:uppercase; color:#64748b;">Admin</th>
+              <th style="padding:14px 16px; text-align:center; font-size:11px; text-transform:uppercase; color:#64748b;">Penalty</th>
+              <th style="padding:14px 16px; text-align:center; font-size:11px; text-transform:uppercase; color:#64748b;">Break score</th>
               <th style="padding:14px 16px; text-align:right; font-size:11px; text-transform:uppercase; color:#64748b;">Break</th>
             </tr>
           </thead>

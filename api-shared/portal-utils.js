@@ -189,7 +189,16 @@ export function feedbackTargetsForParticipant({ role, participantId, pairing, al
   if (!pairing.chair_id) return [];
 
   if (role === 'team') {
-    return [{ targetId: pairing.chair_id, targetRole: 'CHAIR', label: 'Chair adjudicator' }];
+    return [
+      { targetId: pairing.chair_id, targetRole: 'CHAIR', label: 'Chair adjudicator' },
+      ...allocations
+        .filter(allocation => ['WING', 'TRAINEE'].includes(allocation.role))
+        .map(allocation => ({
+          targetId: allocation.adjudicator_id,
+          targetRole: allocation.role,
+          label: allocation.role === 'TRAINEE' ? 'Trainee adjudicator' : 'Wing adjudicator'
+        }))
+    ];
   }
 
   const judgeRole = judgeRoleForPairing(pairing, allocations, participantId);

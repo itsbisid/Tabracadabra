@@ -44,8 +44,10 @@ export default async function handler(request, response) {
 
     const { pairing, round, ballots: existingBallots, allocations } = await fetchPairingBundle(payload.pairingId);
     const judgeRole = assertCanAccessPairing({ tokenData, pairing, allocations });
-    if (judgeRole !== 'CHAIR') throw new Error('Only the chair for this room can submit the ballot.');
-    if (round?.status !== 'Released') throw new Error('Ballots can only be submitted after the draw is released.');
+    if (!judgeRole) throw new Error('Only an adjudicator assigned to this room can submit its ballot.');
+    if (!round?.judge_draw_released_at) {
+      throw new Error('Ballots can only be submitted after the judge draw is released.');
+    }
     if ((existingBallots || []).some(ballot => ballot.status === 'LOCKED')) {
       throw new Error('A confirmed ballot already exists for this room. Ask the tab room to unlock it before resubmitting.');
     }

@@ -148,20 +148,29 @@ export async function sendMail({ to, subject, html, text, idempotencyKey }) {
     auth: { user, pass }
   });
 
-  const info = await sendWithRetry(transporter, {
-    from: alignFrom(from, user),
-    to: recipients,
-    sender: user,
-    subject,
-    html,
-    text,
-    envelope: {
-      from: user,
-      to: recipients
-    },
-    replyTo: replyTo || undefined,
-    headers: idempotencyKey ? { 'X-TabraCadabra-Idempotency-Key': idempotencyKey } : undefined
-  });
+  let info;
+  try {
+    info = await sendWithRetry(transporter, {
+      from: alignFrom(from, user),
+      to: recipients,
+      sender: user,
+      subject,
+      html,
+      text,
+      envelope: {
+        from: user,
+        to: recipients
+      },
+      replyTo: replyTo || undefined,
+      headers: idempotencyKey ? { 'X-TabraCadabra-Idempotency-Key': idempotencyKey } : undefined
+    });
+  } catch (err) {
+    // Surface the raw SMTP response so the real reason is visible in the UI
+    // (e.g. a Workspace account that blocks external recipients).
+    const code = err.responseCode || err.code || '';
+    const detail = err.response || err.message || 'unknown SMTP error';
+    throw new Error(`SMTP send to ${recipients.join(', ')} via ${host} failed [${code}]: ${detail}`.trim());
+  }
 
   return {
     id: info.messageId,

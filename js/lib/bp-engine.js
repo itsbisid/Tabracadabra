@@ -13,6 +13,72 @@ export const BPEngine = {
     }
     return shuffled;
   },
+
+  pairingPenalty: (teams, history = []) => {
+    const points = teams.map(team => Number(team.points || 0));
+    const anchorPoints = points[0];
+    const differentFromAnchor = points.slice(1).filter(value => value !== anchorPoints).length;
+    const totalPointDistance = points.slice(1).reduce((sum, value) => sum + Math.abs(anchorPoints - value), 0);
+    const pointSpread = Math.max(...points) - Math.min(...points);
+    let repeatedOpponents = 0;
+    let institutionClashes = 0;
+
+    for (let i = 0; i < teams.length; i += 1) {
+      for (let j = i + 1; j < teams.length; j += 1) {
+        const first = teams[i];
+        const second = teams[j];
+        if (first.institution && second.institution && first.institution === second.institution) institutionClashes += 1;
+        if (history.some(pairing => [
+          pairing.og_team_id,
+          pairing.oo_team_id,
+          pairing.cg_team_id,
+          pairing.co_team_id
+        ].includes(first.id) && [
+          pairing.og_team_id,
+          pairing.oo_team_id,
+          pairing.cg_team_id,
+          pairing.co_team_id
+        ].includes(second.id))) repeatedOpponents += 1;
+      }
+    }
+
+    // Fill a room with teams on the anchor's exact score first. If a bracket
+    // cannot make a full room, float the fewest teams from the nearest score.
+    return differentFromAnchor * 100000
+      + totalPointDistance * 10000
+      + pointSpread * 1000
+      + repeatedOpponents * 100
+      + institutionClashes * 10;
+  },
+
+  buildPowerPairedRooms: (sortedTeams, history = []) => {
+    const pool = [...sortedTeams];
+    const rooms = [];
+
+    while (pool.length >= 4) {
+      const anchor = pool.shift();
+      const candidateCount = Math.min(pool.length, 11);
+      let best = null;
+
+      for (let a = 0; a < candidateCount - 2; a += 1) {
+        for (let b = a + 1; b < candidateCount - 1; b += 1) {
+          for (let c = b + 1; c < candidateCount; c += 1) {
+            const indices = [a, b, c];
+            const group = [anchor, pool[a], pool[b], pool[c]];
+            // A small displacement cost keeps equally good solutions close to the ladder.
+            const penalty = BPEngine.pairingPenalty(group, history) + a + b + c;
+            if (!best || penalty < best.penalty) best = { indices, group, penalty };
+          }
+        }
+      }
+
+      const selected = best || { indices: [0, 1, 2], group: [anchor, ...pool.slice(0, 3)] };
+      selected.indices.slice().sort((a, b) => b - a).forEach(index => pool.splice(index, 1));
+      rooms.push(selected.group);
+    }
+
+    return rooms;
+  },
   
   /**
    * Main entry point to generate a draw for a round.
@@ -29,13 +95,15 @@ export const BPEngine = {
     // Only active teams enter the draw. Teams created via registration/CSV/manual entry
     // may have a null status, so exclude only those explicitly marked Inactive.
     const teams = (allTeams || []).filter(team => (team.status || 'Active') !== 'Inactive');
+    const previousRoundPairings = (prevPairings || []).filter(pairing => pairing.round_id !== roundId);
+    const numericRound = Number(roundNum || 1);
 
     if (teams.length < 4) throw new Error('Need at least 4 active teams to generate a BP draw.');
     if (teams.length % 4 !== 0) throw new Error('BP draws need an active team count divisible by 4. Add swing teams or deactivate extras before generating pairings.');
 
     // 2. Step 1: Sorting Teams (The Ladder)
     let sortedTeams = [];
-    if (roundNum === 1) {
+    if (numericRound === 1) {
       sortedTeams = BPEngine.shuffle(teams);
     } else {
       const standings = await BPEngine.calculateStandings(tournamentId, teams);
@@ -47,19 +115,16 @@ export const BPEngine = {
     }
 
     // 3. Step 2: Bracketing
-    const rooms = [];
-    const teamPool = [...sortedTeams];
-    let roomCounter = 1;
+    const roomGroups = BPEngine.buildPowerPairedRooms(sortedTeams, previousRoundPairings);
     const configuredRooms = (roomNames || []).map(name => String(name || '').trim()).filter(Boolean);
-    while (teamPool.length >= 4) {
-      const roomIndex = roomCounter - 1;
-      rooms.push({ label: configuredRooms[roomIndex] || `Room ${roomCounter}`, teams: teamPool.splice(0, 4) });
-      roomCounter += 1;
-    }
+    const rooms = roomGroups.map((roomTeams, index) => ({
+      label: configuredRooms[index] || `Room ${index + 1}`,
+      teams: roomTeams
+    }));
 
     // 4. Step 3: Positions
     const pairings = rooms.map(room => {
-      const allocated = BPEngine.allocatePositions(room.teams, prevPairings);
+      const allocated = BPEngine.allocatePositions(room.teams, previousRoundPairings);
       return {
         round_id: roundId,
         tournament_id: tournamentId,

@@ -5,9 +5,18 @@ import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml, escapeJsString } from '../../lib/html.js';
 import { isAdmin } from '../../lib/auth-helpers.js';
 
-const ADMIN_ROLES = new Set(['Director', 'Tab Director', 'Convenor', 'Deputy Convenor']);
+const ADMIN_ROLES = new Set(['Director', 'Chief Tab Master', 'Tab Director', 'Convenor', 'Deputy Convenor']);
 
 const ROLE_OPTIONS = [
+  {
+    value: 'Chief Tab Master',
+    title: 'Chief Tab Master',
+    group: 'Admin access',
+    desc: 'Leads tab operations with full access to draws, ballots, standings, publishing, users, and tournament settings.',
+    iconName: 'crown',
+    color: '#b45309',
+    bg: '#fffbeb'
+  },
   {
     value: 'Director',
     title: 'Director',
