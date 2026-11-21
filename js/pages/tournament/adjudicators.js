@@ -4,7 +4,8 @@ import { supabase } from '../../lib/supabase.js';
 import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml, escapeJsString } from '../../lib/html.js';
 import { isAdmin } from '../../lib/auth-helpers.js';
-import { sendRegistrationApprovedEmail, sendPrivateUrlsToAll, summarizeBulkSend } from '../../lib/email-service.js';
+import { openGmailPrivateUrlQueue } from '../../lib/gmail-compose.js';
+import { sendRegistrationApprovedEmail } from '../../lib/email-service.js';
 
 export async function renderAdjudicators(container) {
   const tournamentId = requireActiveTournamentId();
@@ -42,23 +43,12 @@ export async function renderAdjudicators(container) {
       role: 'adjudicator',
       dashboardUrl: `${window.location.origin}/#/portal/judge/${judge.id}`
     }));
-    const withEmail = recipients.filter(r => String(r.email || '').trim()).length;
-    if (!withEmail) { alert('No adjudicators have an email address saved.'); return; }
-    if (!confirm(`Email each adjudicator their own private URL?
-
-${withEmail} of ${recipients.length} adjudicators have an email address.`)) return;
-    const original = button.innerHTML;
+    if (!recipients.length) { alert('No adjudicators to send to yet.'); return; }
     button.disabled = true;
     try {
-      const result = await sendPrivateUrlsToAll({
-        tournamentId,
-        recipients,
-        onProgress: (done, total) => { button.textContent = `Sending ${done}/${total}...`; }
-      });
-      alert(summarizeBulkSend(result));
+      await openGmailPrivateUrlQueue({ tournamentId, recipients, title: 'Send private URLs from Gmail' });
     } finally {
       button.disabled = false;
-      button.innerHTML = original;
     }
   };
 
@@ -287,7 +277,7 @@ ${withEmail} of ${recipients.length} adjudicators have an email address.`)) retu
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px;">
         <div style="display:flex; gap:12px; align-items:center;">
           ${isUserAdmin ? `
-            <button onclick="window.tcSendAllJudgeUrls(this)" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;" title="Email every adjudicator their own private URL">${icon('mail', 18)} Send Private URLs</button>
+            <button onclick="window.tcSendAllJudgeUrls(this)" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;" title="Open Gmail drafts with each adjudicator's private URL">${icon('mail', 18)} Send Private URLs</button>
             <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
             <button onclick="document.getElementById('add-adj-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Adjudicator</button>
           ` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}

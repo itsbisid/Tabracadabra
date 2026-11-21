@@ -5,7 +5,7 @@ import { requireActiveTournamentId } from '../../lib/tournament-context.js';
 import { escapeHtml, escapeJsString } from '../../lib/html.js';
 import { DEFAULT_TEAM_EMOJI, getTeamEmoji, teamLabelHtml } from '../../lib/team-display.js';
 import { isAdmin } from '../../lib/auth-helpers.js';
-import { sendPrivateUrlsToAll, summarizeBulkSend } from '../../lib/email-service.js';
+import { openGmailPrivateUrlQueue } from '../../lib/gmail-compose.js';
 
 const EMOJI_CATEGORIES = {
   Default: [DEFAULT_TEAM_EMOJI],
@@ -240,23 +240,12 @@ export async function renderTeams(container) {
       teamName: team.name,
       dashboardUrl: `${window.location.origin}/#/portal/team/${team.id}?speaker=${encodeURIComponent(team[`speaker${slot}_name`] || '')}`
     }))).filter(r => r.name || r.email);
-    const withEmail = recipients.filter(r => String(r.email || '').trim()).length;
-    if (!withEmail) { alert('No speakers have an email address saved.'); return; }
-    if (!confirm(`Email each speaker their own private URL?
-
-${withEmail} of ${recipients.length} speakers have an email address.`)) return;
-    const original = button.innerHTML;
+    if (!recipients.length) { alert('No speakers to send to yet.'); return; }
     button.disabled = true;
     try {
-      const result = await sendPrivateUrlsToAll({
-        tournamentId,
-        recipients,
-        onProgress: (done, total) => { button.textContent = `Sending ${done}/${total}...`; }
-      });
-      alert(summarizeBulkSend(result));
+      await openGmailPrivateUrlQueue({ tournamentId, recipients, title: 'Send private URLs from Gmail' });
     } finally {
       button.disabled = false;
-      button.innerHTML = original;
     }
   };
 
@@ -568,7 +557,7 @@ ${withEmail} of ${recipients.length} speakers have an email address.`)) return;
         </div>
         <div style="display:flex; gap:12px; align-items:center;">
           ${isUserAdmin ? `
-            <button onclick="window.tcSendAllTeamUrls(this)" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;" title="Email every speaker their own private URL">${icon('mail', 18)} Send Private URLs</button>
+            <button onclick="window.tcSendAllTeamUrls(this)" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;" title="Open Gmail drafts with each speaker's private URL">${icon('mail', 18)} Send Private URLs</button>
             <button onclick="window.tcImportCSV()" class="btn btn--outline" style="display:flex; align-items:center; gap:8px; background:white;">${icon('upload', 18)} Import CSV</button>
             <button onclick="document.getElementById('add-team-modal').style.display='flex'" class="btn btn--primary" style="display:flex; align-items:center; gap:8px;">${icon('plus', 18)} Add Team</button>
           ` : `<span style="font-size:13px; color:#64748b;">Read-only: admin permissions required for changes.</span>`}
