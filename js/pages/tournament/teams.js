@@ -6,6 +6,7 @@ import { escapeHtml, escapeJsString } from '../../lib/html.js';
 import { DEFAULT_TEAM_EMOJI, getTeamEmoji, teamLabelHtml } from '../../lib/team-display.js';
 import { isAdmin } from '../../lib/auth-helpers.js';
 import { openGmailPrivateUrlQueue } from '../../lib/gmail-compose.js';
+import { teamsFromCsv } from '../../lib/team-csv.js';
 
 const EMOJI_CATEGORIES = {
   Default: [DEFAULT_TEAM_EMOJI],
@@ -257,24 +258,11 @@ export async function renderTeams(container) {
     input.onchange = async (e) => {
       const file = e.target.files[0];
       const text = await file.text();
-      const lines = text.split('\n').filter(l => l.trim());
-      
-      // Skip header: Team Name, Institution, S1 Name, S1 Email, S2 Name, S2 Email, Division
-      const rows = lines.slice(1);
-      const newTeams = rows.map(row => {
-        const [name, inst, s1, s1e, s2, s2e, div] = row.split(',').map(s => s.trim());
-        return {
-          tournament_id: tournamentId,
-          name,
-          emoji: DEFAULT_TEAM_EMOJI,
-          institution: inst,
-          speaker1_name: s1,
-          speaker1_email: s1e,
-          speaker2_name: s2,
-          speaker2_email: s2e,
-          division: div || 'Open'
-        };
-      });
+      const { teams: parsed, warnings } = teamsFromCsv(text);
+      if (!parsed.length) { alert(['No teams found in this CSV.', ...warnings].join('\n')); return; }
+      const preview = parsed.map(t => `- ${t.name}: ${t.speaker1_name} & ${t.speaker2_name}`).join('\n');
+      if (!confirm(`Import ${parsed.length} team(s)?\n\n${preview}${warnings.length ? `\n\nCheck:\n${warnings.join('\n')}` : ''}`)) return;
+      const newTeams = parsed.map(team => ({ ...team, tournament_id: tournamentId, emoji: DEFAULT_TEAM_EMOJI }));
 
       const { error } = await insertTeamsWithEmoji(newTeams);
       if (error) alert(error.message);
